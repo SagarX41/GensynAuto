@@ -683,7 +683,7 @@ main_menu() {
             1) install_node ;;
             2) run_node ;;
             3) update_node ;;
-            4. change_config ;;
+            4) change_config ;;
             5) reset_peer ;;
             6)
                 echo -e "\n${RED}${BOLD}⚠️ WARNING: This will delete ALL node data!${NC}"

@@ -670,10 +670,11 @@ main_menu() {
         echo "1. 🛠  Install/Reinstall Node"
         echo "2. 🚀  Run Node"
         echo "3. ⚙️  Update Node"
-        echo "4. ♻️  Reset Peer ID"
-        echo "5. 🗑️  Delete Everything & Start New"
-        echo "6. 📉  Downgrade Version"
-        echo "7. ❌ Exit"
+        echo '4. 🔥  Change Configuration'
+        echo "5. ♻️  Reset Peer ID"
+        echo "6. 🗑️  Delete Everything & Start New"
+        echo "7. 📉  Downgrade Version"
+        echo "8. ❌ Exit"
         echo -e "${GREEN}===============================================================================${NC}"
         
         read -p "${BOLD}${YELLOW}➡️ Select option [1-7]: ${NC}" choice
@@ -682,8 +683,9 @@ main_menu() {
             1) install_node ;;
             2) run_node ;;
             3) update_node ;;
-            4) reset_peer ;;
-            5)
+            4. change_config ;;
+            5) reset_peer ;;
+            6)
                 echo -e "\n${RED}${BOLD}⚠️ WARNING: This will delete ALL node data!${NC}"
                 read -p "${BOLD}Are you sure you want to continue? [y/N]: ${NC}" confirm
                 if [[ "$confirm" =~ ^[Yy]$ ]]; then
@@ -702,8 +704,8 @@ main_menu() {
                     echo -e "${YELLOW}⚠️ Operation canceled${NC}"
                 fi
                 ;;
-            6) install_downgraded_node ;;
-            7)
+            7) install_downgraded_node ;;
+            8)
                 echo -e "\n${GREEN}✅ Exiting... Thank you for using Hustle Manager!${NC}"
                 exit 0
                 ;;

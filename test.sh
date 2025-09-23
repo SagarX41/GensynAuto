@@ -1,5 +1,4 @@
 #!/bin/bash
-#AAAA
 # Color setup
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
@@ -24,6 +23,7 @@ LOG_FILE="$HOME/swarm_log.txt"
 SWAP_FILE="/swapfile"
 REPO_URL="https://github.com/gensyn-ai/rl-swarm.git"
 TEMP_DATA_DIR="$SWARM_DIR/modal-login/temp-data"
+NODE_LOG="$SWARM_DIR/node.log"  # Ensure node.log path is defined
 
 # Global Variables
 KEEP_TEMP_DATA=true
@@ -178,6 +178,10 @@ clone_repo() {
     sudo rm -rf "$SWARM_DIR" 2>/dev/null
     log "INFO" "📥 Cloning repository..."
     git clone "$REPO_URL" "$SWARM_DIR" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log "ERROR" "❌ Failed to clone repository from $REPO_URL"
+        exit 1
+    fi
     cd "$SWARM_DIR"
     log "INFO" "✅ Repository cloned to $SWARM_DIR"
 }
@@ -229,11 +233,15 @@ install_python_packages() {
     TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
     if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ]; then
         pip install --force-reinstall transformers==4.51.3 trl==0.19.1
+        if [ $? -ne 0 ]; then
+            log "ERROR" "❌ Failed to install Python packages"
+            exit 1
+        fi
         log "INFO" "✅ Installed transformers==4.51.3 and trl==0.19.1"
     else
         log "INFO" "ℹ️ Required Python packages already installed"
     fi
-    pip freeze | grep -E '^(transformers|trl)=='
+    pip freeze | grep -E '^(transformers|trl)==' >> "$LOG_FILE"
 }
 
 # Check Gensyn Node Status
@@ -241,11 +249,16 @@ check_gensyn_node_status() {
     log "INFO" "🔍 Checking Gensyn node status..."
     echo -e "${CYAN}${BOLD}🔍 Gensyn Node Status${NC}"
 
-    # Check if tmux session 'GEN' exists and look for "Map: 100%"
+    # Check if tmux session 'GEN' exists
     tmux has-session -t "GEN" 2>/dev/null
     if [ $? -eq 0 ]; then
-        # Capture the last 10 lines of the tmux session 'GEN' and check for "Map: 100%"
-        tmux capture-pane -t "GEN" -p -S -10 | grep -q "Map: 100%" >/dev/null 2>&1
+        # Capture the last 50 lines of the tmux session 'GEN' and log them for debugging
+        TMUX_OUTPUT=$(tmux capture-pane -t "GEN" -p -S -50 2>/dev/null)
+        echo "$TMUX_OUTPUT" >> "$LOG_FILE"
+        log "INFO" "Captured tmux session output for debugging"
+
+        # Check for "Map: 100%" or other indicators of a running node
+        echo "$TMUX_OUTPUT" | grep -q "Map: 100%" >/dev/null 2>&1
         if [ $? -eq 0 ]; then
             log "INFO" "✅ Node is LIVE (Map: 100% found in tmux session 'GEN')"
             echo -e "${GREEN}✅ Node Status: LIVE (Map: 100% found)${NC}"
@@ -335,15 +348,26 @@ run_node() {
     : "${PARTICIPATE_AI_MARKET:=Y}"
 
     while true; do
-        LOG_FILE="$SWARM_DIR/node.log"
-        : > "$LOG_FILE"  
+        : > "$NODE_LOG"  # Clear node.log
 
         # Run the node in a tmux session named 'GEN'
-        tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee $LOG_FILE
+        log "INFO" "Starting tmux session 'GEN'..."
+        tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee $NODE_LOG
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
 EOF"
+        if [ $? -ne 0 ]; then
+            log "ERROR" "❌ Failed to start tmux session 'GEN'"
+            echo -e "${RED}❌ Failed to start tmux session 'GEN'${NC}"
+            sleep 5
+            continue
+        fi
+
+        # Wait for initial startup (10 minutes) before checking status
+        log "INFO" "Waiting 10 minutes for node to initialize..."
+        echo -e "${CYAN}⏳ Waiting 10 minutes for node to initialize...${NC}"
+        sleep 600
 
         # Monitor the node status
         while tmux has-session -t "GEN" 2>/dev/null; do
@@ -367,7 +391,30 @@ EOF"
     done
 }
 
+# Check system resources
+check_resources() {
+    log "INFO" "🔍 Checking system resources..."
+    FREE_MEM=$(free -m | awk '/Mem:/ {print $4}')
+    CPU_USAGE=$(top -bn1 | head -n 3 | grep "Cpu(s)" | awk '{print $2}' | cut -d. -f1)
+    DISK_FREE=$(df -h / | tail -n 1 | awk '{print $4}' | sed 's/G//')
+    log "INFO" "Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB"
+    echo -e "${CYAN}Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB${NC}"
+    if [ "$FREE_MEM" -lt 500 ]; then
+        log "WARN" "⚠️ Low memory (${FREE_MEM}MB free), may cause node crashes"
+        echo -e "${YELLOW}⚠️ Low memory (${FREE_MEM}MB free), consider increasing swap or freeing memory${NC}"
+    fi
+    if [ "$CPU_USAGE" -gt 80 ]; then
+        log "WARN" "⚠️ High CPU usage (${CPU_USAGE}%), may slow down node startup"
+        echo -e "${YELLOW}⚠️ High CPU usage (${CPU_USAGE}%), consider reducing load${NC}"
+    fi
+    if (( $(echo "$DISK_FREE < 5" | bc -l) )); then
+        log "WARN" "⚠️ Low disk space (${DISK_FREE}GB free), may cause issues"
+        echo -e "${YELLOW}⚠️ Low disk space (${DISK_FREE}GB free), consider freeing space${NC}"
+    fi
+}
+
 init
+check_resources  # Check resources at startup
 trap "echo -e '\n${GREEN}✅ Stopped gracefully${NC}'; tmux kill-session -t 'GEN' 2>/dev/null; exit 0" SIGINT
 if [ -d "$SWARM_DIR" ] && [ -f "$SWARM_DIR/run_rl_swarm.sh" ]; then
     echo -e "${GREEN}✅ Node already installed, proceeding to unzip files and run...${NC}"

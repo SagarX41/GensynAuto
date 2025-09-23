@@ -100,12 +100,11 @@ unzip_files() {
     fi
 }
 
-
 # Dependencies
 install_deps() {
     log "INFO" "🔄 Updating package list..."
     sudo apt update -y
-    sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof ufw jq perl gnupg
+    sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof ufw jq perl gnupg tmux
     log "INFO" "🟢 Installing Node.js 20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
     sudo apt install -y nodejs
@@ -237,8 +236,30 @@ install_python_packages() {
     pip freeze | grep -E '^(transformers|trl)=='
 }
 
-has_error() {
-    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)' "$LOG_FILE"
+# Check Gensyn Node Status
+check_gensyn_node_status() {
+    log "INFO" "🔍 Checking Gensyn node status..."
+    echo -e "${CYAN}${BOLD}🔍 Gensyn Node Status${NC}"
+
+    # Check if tmux session 'GEN' exists and look for "Map: 100%"
+    tmux has-session -t "GEN" 2>/dev/null
+    if [ $? -eq 0 ]; then
+        # Capture the last 10 lines of the tmux session 'GEN' and check for "Map: 100%"
+        tmux capture-pane -t "GEN" -p -S -10 | grep -q "Map: 100%" >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            log "INFO" "✅ Node is LIVE (Map: 100% found in tmux session 'GEN')"
+            echo -e "${GREEN}✅ Node Status: LIVE (Map: 100% found)${NC}"
+            return 0
+        else
+            log "WARN" "⚠️ Node is OFFLINE (Map: 100% not found in tmux session 'GEN')"
+            echo -e "${RED}⚠️ Node Status: OFFLINE (Map: 100% not found)${NC}"
+            return 1
+        fi
+    else
+        log "ERROR" "❌ No tmux session 'GEN' found"
+        echo -e "${RED}❌ Node Status: OFFLINE (No tmux session 'GEN' found)${NC}"
+        return 1
+    fi
 }
 
 # Install node
@@ -317,26 +338,37 @@ run_node() {
         LOG_FILE="$SWARM_DIR/node.log"
         : > "$LOG_FILE"  
 
-        KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$LOG_FILE"
+        # Run the node in a tmux session named 'GEN'
+        tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee $LOG_FILE
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
-EOF
+EOF"
 
-        if has_error; then
-            log "ERROR" "❌ Critical error detected, restarting in 5 seconds..."
-            echo -e "${RED}❌ Critical error detected. Restarting in 5 seconds...${NC}"
-        else
-            log "WARN" "⚠️ Node exited without critical error, restarting in 5 seconds..."
-            echo -e "${YELLOW}⚠️ Node exited (non-critical). Restarting in 5 seconds...${NC}"
+        # Monitor the node status
+        while tmux has-session -t "GEN" 2>/dev/null; do
+            check_gensyn_node_status
+            if [ $? -ne 0 ]; then
+                log "ERROR" "❌ Node is OFFLINE or crashed, restarting in 5 seconds..."
+                echo -e "${RED}❌ Node is OFFLINE or crashed. Restarting in 5 seconds...${NC}"
+                tmux kill-session -t "GEN" 2>/dev/null
+                break
+            fi
+            sleep 10  # Check status every 10 seconds
+        done
+
+        # If tmux session 'GEN' no longer exists, assume node exited
+        if ! tmux has-session -t "GEN" 2>/dev/null; then
+            log "WARN" "⚠️ Node exited (tmux session 'GEN' terminated), restarting in 5 seconds..."
+            echo -e "${YELLOW}⚠️ Node exited (tmux session 'GEN' terminated). Restarting in 5 seconds...${NC}"
         fi
 
         sleep 5
     done
-}   # ✅ yeh closing bracket missing tha
+}
 
 init
-trap "echo -e '\n${GREEN}✅ Stopped gracefully${NC}'; exit 0" SIGINT
+trap "echo -e '\n${GREEN}✅ Stopped gracefully${NC}'; tmux kill-session -t 'GEN' 2>/dev/null; exit 0" SIGINT
 if [ -d "$SWARM_DIR" ] && [ -f "$SWARM_DIR/run_rl_swarm.sh" ]; then
     echo -e "${GREEN}✅ Node already installed, proceeding to unzip files and run...${NC}"
     unzip_files

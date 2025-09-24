@@ -1,5 +1,5 @@
 #!/bin/bash
-# Color setup AAAAAAAAAAAAAAAA
+# Color setup
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -66,41 +66,11 @@ install_unzip() {
     fi
 }
 
-# Validate critical files
-validate_file() {
-    local file="$1"
-    local name=$(basename "$file")
-    if [ ! -f "$file" ]; then
-        log "ERROR" "❌ $name not found"
-        return 1
-    fi
-    if [ ! -s "$file" ]; then
-        log "ERROR" "❌ $name is empty"
-        return 1
-    fi
-    if [ "$name" = "swarm.pem" ] && ! grep -q "PRIVATE KEY" "$file" 2>/dev/null; then
-        log "ERROR" "❌ $name does not appear to be a valid PEM file"
-        return 1
-    fi
-    if [[ "$name" =~ ^(userData|userApiKey)\.json$ ]] && ! jq . "$file" >/dev/null 2>&1; then
-        log "ERROR" "❌ $name is not a valid JSON file"
-        return 1
-    fi
-    log "INFO" "✅ $name validated successfully"
-    return 0
-}
-
-# Unzip files from HOME
+# Unzip files from HOME (no validation)
 unzip_files() {
-    local zip_files
-    mapfile -t zip_files < <(find "$HOME" -maxdepth 1 -type f -name "*.zip")
+    ZIP_FILE=$(find "$HOME" -maxdepth 1 -type f -name "*.zip" | head -n 1)
     
-    if [ ${#zip_files[@]} -eq 0 ]; then
-        log "WARN" "⚠️ No ZIP files found in $HOME, proceeding without unzipping"
-        return
-    fi
-
-    for ZIP_FILE in "${zip_files[@]}"; do
+    if [ -n "$ZIP_FILE" ]; then
         log "INFO" "📂 Found ZIP file: $ZIP_FILE, unzipping to $HOME ..."
         install_unzip
         unzip -o "$ZIP_FILE" -d "$HOME" >/dev/null 2>&1
@@ -108,28 +78,16 @@ unzip_files() {
         [ -f "$HOME/swarm.pem" ] && {
             sudo mv "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
             sudo chmod 600 "$SWARM_DIR/swarm.pem"
-            validate_file "$SWARM_DIR/swarm.pem" || {
-                log "ERROR" "❌ Invalid swarm.pem, aborting"
-                exit 1
-            }
             JUST_EXTRACTED_PEM=true
-            log "INFO" "✅ Moved swarm.pem to $SWARM_DIR from $ZIP_FILE"
+            log "INFO" "✅ Moved swarm.pem to $SWARM_DIR"
         }
         [ -f "$HOME/userData.json" ] && {
             sudo mv "$HOME/userData.json" "$TEMP_DATA_DIR/"
-            validate_file "$TEMP_DATA_DIR/userData.json" || {
-                log "ERROR" "❌ Invalid userData.json, aborting"
-                exit 1
-            }
-            log "INFO" "✅ Moved userData.json to $TEMP_DATA_DIR from $ZIP_FILE"
+            log "INFO" "✅ Moved userData.json to $TEMP_DATA_DIR"
         }
         [ -f "$HOME/userApiKey.json" ] && {
             sudo mv "$HOME/userApiKey.json" "$TEMP_DATA_DIR/"
-            validate_file "$TEMP_DATA_DIR/userApiKey.json" || {
-                log "ERROR" "❌ Invalid userApiKey.json, aborting"
-                exit 1
-            }
-            log "INFO" "✅ Moved userApiKey.json to $TEMP_DATA_DIR from $ZIP_FILE"
+            log "INFO" "✅ Moved userApiKey.json to $TEMP_DATA_DIR"
         }
 
         ls -l "$HOME"
@@ -138,7 +96,9 @@ unzip_files() {
         else
             log "WARN" "⚠️ No expected files (swarm.pem, userData.json, userApiKey.json) found in $ZIP_FILE"
         fi
-    done
+    else
+        log "WARN" "⚠️ No ZIP file found in $HOME, proceeding without unzipping"
+    fi
 }
 
 # Dependencies
@@ -400,10 +360,6 @@ run_node() {
         if [ -f "$HOME/swarm.pem" ]; then
             sudo cp "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
             sudo chmod 600 "$SWARM_DIR/swarm.pem"
-            validate_file "$SWARM_DIR/swarm.pem" || {
-                log "ERROR" "❌ Invalid swarm.pem, aborting"
-                exit 1
-            }
             log "INFO" "✅ Copied swarm.pem from HOME to SWARM_DIR"
         else
             log "WARN" "⚠️ swarm.pem not found in HOME directory. Proceeding without it..."

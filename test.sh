@@ -1,5 +1,5 @@
 #!/bin/bash
-# Color setup
+# Color setup AAAAAAAAAAAAAAAA
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -23,11 +23,12 @@ LOG_FILE="$HOME/swarm_log.txt"
 SWAP_FILE="/swapfile"
 REPO_URL="https://github.com/gensyn-ai/rl-swarm.git"
 TEMP_DATA_DIR="$SWARM_DIR/modal-login/temp-data"
-NODE_LOG="$SWARM_DIR/node.log"  # Ensure node.log path is defined
+NODE_LOG="$SWARM_DIR/node.log"
 
 # Global Variables
 KEEP_TEMP_DATA=true
 JUST_EXTRACTED_PEM=false
+NODE_INIT_WAIT=600  # Wait time for node initialization (in seconds, default 10 minutes)
 
 # Logging
 log() {
@@ -65,11 +66,41 @@ install_unzip() {
     fi
 }
 
+# Validate critical files
+validate_file() {
+    local file="$1"
+    local name=$(basename "$file")
+    if [ ! -f "$file" ]; then
+        log "ERROR" "❌ $name not found"
+        return 1
+    fi
+    if [ ! -s "$file" ]; then
+        log "ERROR" "❌ $name is empty"
+        return 1
+    fi
+    if [ "$name" = "swarm.pem" ] && ! grep -q "PRIVATE KEY" "$file" 2>/dev/null; then
+        log "ERROR" "❌ $name does not appear to be a valid PEM file"
+        return 1
+    fi
+    if [[ "$name" =~ ^(userData|userApiKey)\.json$ ]] && ! jq . "$file" >/dev/null 2>&1; then
+        log "ERROR" "❌ $name is not a valid JSON file"
+        return 1
+    fi
+    log "INFO" "✅ $name validated successfully"
+    return 0
+}
+
 # Unzip files from HOME
 unzip_files() {
-    ZIP_FILE=$(find "$HOME" -maxdepth 1 -type f -name "*.zip" | head -n 1)
+    local zip_files
+    mapfile -t zip_files < <(find "$HOME" -maxdepth 1 -type f -name "*.zip")
     
-    if [ -n "$ZIP_FILE" ]; then
+    if [ ${#zip_files[@]} -eq 0 ]; then
+        log "WARN" "⚠️ No ZIP files found in $HOME, proceeding without unzipping"
+        return
+    fi
+
+    for ZIP_FILE in "${zip_files[@]}"; do
         log "INFO" "📂 Found ZIP file: $ZIP_FILE, unzipping to $HOME ..."
         install_unzip
         unzip -o "$ZIP_FILE" -d "$HOME" >/dev/null 2>&1
@@ -77,16 +108,28 @@ unzip_files() {
         [ -f "$HOME/swarm.pem" ] && {
             sudo mv "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
             sudo chmod 600 "$SWARM_DIR/swarm.pem"
+            validate_file "$SWARM_DIR/swarm.pem" || {
+                log "ERROR" "❌ Invalid swarm.pem, aborting"
+                exit 1
+            }
             JUST_EXTRACTED_PEM=true
-            log "INFO" "✅ Moved swarm.pem to $SWARM_DIR"
+            log "INFO" "✅ Moved swarm.pem to $SWARM_DIR from $ZIP_FILE"
         }
         [ -f "$HOME/userData.json" ] && {
             sudo mv "$HOME/userData.json" "$TEMP_DATA_DIR/"
-            log "INFO" "✅ Moved userData.json to $TEMP_DATA_DIR"
+            validate_file "$TEMP_DATA_DIR/userData.json" || {
+                log "ERROR" "❌ Invalid userData.json, aborting"
+                exit 1
+            }
+            log "INFO" "✅ Moved userData.json to $TEMP_DATA_DIR from $ZIP_FILE"
         }
         [ -f "$HOME/userApiKey.json" ] && {
             sudo mv "$HOME/userApiKey.json" "$TEMP_DATA_DIR/"
-            log "INFO" "✅ Moved userApiKey.json to $TEMP_DATA_DIR"
+            validate_file "$TEMP_DATA_DIR/userApiKey.json" || {
+                log "ERROR" "❌ Invalid userApiKey.json, aborting"
+                exit 1
+            }
+            log "INFO" "✅ Moved userApiKey.json to $TEMP_DATA_DIR from $ZIP_FILE"
         }
 
         ls -l "$HOME"
@@ -95,9 +138,7 @@ unzip_files() {
         else
             log "WARN" "⚠️ No expected files (swarm.pem, userData.json, userApiKey.json) found in $ZIP_FILE"
         fi
-    else
-        log "WARN" "⚠️ No ZIP file found in $HOME, proceeding without unzipping"
-    fi
+    done
 }
 
 # Dependencies
@@ -249,30 +290,73 @@ check_gensyn_node_status() {
     log "INFO" "🔍 Checking Gensyn node status..."
     echo -e "${CYAN}${BOLD}🔍 Gensyn Node Status${NC}"
 
-    # Check if tmux session 'GEN' exists
-    tmux has-session -t "GEN" 2>/dev/null
-    if [ $? -eq 0 ]; then
-        # Capture the last 50 lines of the tmux session 'GEN' and log them for debugging
-        TMUX_OUTPUT=$(tmux capture-pane -t "GEN" -p -S -50 2>/dev/null)
-        echo "$TMUX_OUTPUT" >> "$LOG_FILE"
-        log "INFO" "Captured tmux session output for debugging"
-
-        # Check for "Map: 100%" or other indicators of a running node
-        echo "$TMUX_OUTPUT" | grep -q "Map: 100%" >/dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            log "INFO" "✅ Node is LIVE (Map: 100% found in tmux session 'GEN')"
-            echo -e "${GREEN}✅ Node Status: LIVE (Map: 100% found)${NC}"
-            return 0
-        else
-            log "WARN" "⚠️ Node is OFFLINE (Map: 100% not found in tmux session 'GEN')"
-            echo -e "${RED}⚠️ Node Status: OFFLINE (Map: 100% not found)${NC}"
-            return 1
-        fi
-    else
+    if ! tmux has-session -t "GEN" 2>/dev/null; then
         log "ERROR" "❌ No tmux session 'GEN' found"
         echo -e "${RED}❌ Node Status: OFFLINE (No tmux session 'GEN' found)${NC}"
         return 1
     fi
+
+    TMUX_OUTPUT=$(tmux capture-pane -t "GEN" -p -S -200 2>/dev/null)
+    echo "$TMUX_OUTPUT" >> "$NODE_LOG"
+    log "INFO" "Captured tmux session output for debugging"
+
+    local status_indicators=("Map: 100%" "Node running successfully" "Connected to network")
+    local indicator_found=false
+    for indicator in "${status_indicators[@]}"; do
+        if echo "$TMUX_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
+            indicator_found=true
+            log "INFO" "✅ Node is LIVE (Indicator: '$indicator' found in tmux session 'GEN')"
+            echo -e "${GREEN}✅ Node Status: LIVE ($indicator found)${NC}"
+            return 0
+        fi
+    done
+
+    local retries=3
+    local attempt=1
+    while [ $attempt -le $retries ]; do
+        log "WARN" "⚠️ Node status check attempt $attempt/$retries: No status indicators found"
+        sleep 10
+        TMUX_OUTPUT=$(tmux capture-pane -t "GEN" -p -S -200 2>/dev/null)
+        echo "$TMUX_OUTPUT" >> "$NODE_LOG"
+        for indicator in "${status_indicators[@]}"; do
+            if echo "$TMUX_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
+                indicator_found=true
+                log "INFO" "✅ Node is LIVE after retry (Indicator: '$indicator' found)"
+                echo -e "${GREEN}✅ Node Status: LIVE ($indicator found)${NC}"
+                return 0
+            fi
+        done
+        ((attempt++))
+    done
+
+    log "ERROR" "❌ Node is OFFLINE (No status indicators found after $retries retries)"
+    echo -e "${RED}❌ Node Status: OFFLINE (No status indicators found)${NC}"
+    return 1
+}
+
+# Monitor system resources
+monitor_resources() {
+    while true; do
+        log "INFO" "🔍 Checking system resources..."
+        FREE_MEM=$(free -m | awk '/Mem:/ {print $4}')
+        CPU_USAGE=$(top -bn1 | head -n 3 | grep "Cpu(s)" | awk '{print $2}' | cut -d. -f1)
+        DISK_FREE=$(df -h / | tail -n 1 | awk '{print $4}' | sed 's/G//')
+        log "INFO" "Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB"
+        echo -e "${CYAN}Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB${NC}"
+        if [ "$FREE_MEM" -lt 500 ]; then
+            log "WARN" "⚠️ Low memory (${FREE_MEM}MB free), may cause node crashes"
+            echo -e "${YELLOW}⚠️ Low memory (${FREE_MEM}MB free), consider increasing swap or freeing memory${NC}"
+        fi
+        if [ "$CPU_USAGE" -gt 80 ]; then
+            log "WARN" "⚠️ High CPU usage (${CPU_USAGE}%), may slow down node startup"
+            echo -e "${YELLOW}⚠️ High CPU usage (${CPU_USAGE}%), consider reducing load${NC}"
+        fi
+        if (( $(echo "$DISK_FREE < 5" | bc -l) )); then
+            log "WARN" "⚠️ Low disk space (${DISK_FREE}GB free), may cause issues"
+            echo -e "${YELLOW}⚠️ Low disk space (${DISK_FREE}GB free), consider freeing space${NC}"
+        fi
+        sleep 300
+    done
 }
 
 # Install node
@@ -283,7 +367,6 @@ install_node() {
     KEEP_TEMP_DATA=true
     export KEEP_TEMP_DATA
 
-    # Spinner helper
     spinner() {
         local pid=$1
         local msg="$2"
@@ -297,7 +380,6 @@ install_node() {
         printf "\r$msg ✅ Done"; tput el; echo
     }
 
-    # Step 1: Install dependencies, clone repo, modify scripts
     ( install_deps ) & spinner $! "📦 Installing dependencies"
     ( clone_repo ) & spinner $! "📥 Cloning repo"
     ( modify_run_script ) & spinner $! "🧠 Modifying run script"
@@ -318,6 +400,10 @@ run_node() {
         if [ -f "$HOME/swarm.pem" ]; then
             sudo cp "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
             sudo chmod 600 "$SWARM_DIR/swarm.pem"
+            validate_file "$SWARM_DIR/swarm.pem" || {
+                log "ERROR" "❌ Invalid swarm.pem, aborting"
+                exit 1
+            }
             log "INFO" "✅ Copied swarm.pem from HOME to SWARM_DIR"
         else
             log "WARN" "⚠️ swarm.pem not found in HOME directory. Proceeding without it..."
@@ -347,12 +433,15 @@ run_node() {
     install_python_packages
     : "${PARTICIPATE_AI_MARKET:=Y}"
 
-    while true; do
-        : > "$NODE_LOG"  # Clear node.log
+    monitor_resources &
+    RESOURCE_MONITOR_PID=$!
+    log "INFO" "Started resource monitoring (PID: $RESOURCE_MONITOR_PID)"
 
-        # Run the node in a tmux session named 'GEN'
+    while true; do
+        echo "=== Node Restart: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$NODE_LOG"
+
         log "INFO" "Starting tmux session 'GEN'..."
-        tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee $NODE_LOG
+        tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee -a $NODE_LOG
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
@@ -364,30 +453,37 @@ EOF"
             continue
         fi
 
-        # Wait for initial startup (10 minutes) before checking status
-        log "INFO" "Waiting 10 minutes for node to initialize..."
-        echo -e "${CYAN}⏳ Waiting 10 minutes for node to initialize...${NC}"
-        sleep 600
+        log "INFO" "Waiting $((NODE_INIT_WAIT/60)) minutes for node to initialize..."
+        echo -e "${CYAN}⏳ Waiting $((NODE_INIT_WAIT/60)) minutes for node to initialize...${NC}"
+        sleep "$NODE_INIT_WAIT"
 
-        # Monitor the node status
-        while tmux has-session -t "GEN" 2>/dev/null; do
-            check_gensyn_node_status
-            if [ $? -ne 0 ]; then
-                log "ERROR" "❌ Node is OFFLINE or crashed, restarting in 5 seconds..."
-                echo -e "${RED}❌ Node is OFFLINE or crashed. Restarting in 5 seconds...${NC}"
-                tmux kill-session -t "GEN" 2>/dev/null
-                break
-            fi
-            sleep 10  # Check status every 10 seconds
-        done
-
-        # If tmux session 'GEN' no longer exists, assume node exited
         if ! tmux has-session -t "GEN" 2>/dev/null; then
-            log "WARN" "⚠️ Node exited (tmux session 'GEN' terminated), restarting in 5 seconds..."
-            echo -e "${YELLOW}⚠️ Node exited (tmux session 'GEN' terminated). Restarting in 5 seconds...${NC}"
+            log "WARN" "⚠️ Node exited during initialization (tmux session 'GEN' terminated), restarting in 5 seconds..."
+            echo -e "${YELLOW}⚠️ Node exited during initialization. Restarting in 5 seconds...${NC}"
+            sleep 5
+            continue
         fi
 
-        sleep 5
+        check_gensyn_node_status
+        if [ $? -eq 0 ]; then
+            log "INFO" "Node is running, entering monitoring loop..."
+            while tmux has-session -t "GEN" 2>/dev/null; do
+                check_gensyn_node_status
+                if [ $? -ne 0 ]; then
+                    log "ERROR" "❌ Node is OFFLINE or crashed, restarting in 5 seconds..."
+                    echo -e "${RED}❌ Node is OFFLINE or crashed. Restarting in 5 seconds...${NC}"
+                    tmux kill-session -t "GEN" 2>/dev/null
+                    sleep 5
+                    break
+                fi
+                sleep 10
+            done
+        else
+            log "ERROR" "❌ Node failed to start properly, restarting in 5 seconds..."
+            echo -e "${RED}❌ Node failed to start properly. Restarting in 5 seconds...${NC}"
+            tmux kill-session -t "GEN" 2>/dev/null
+            sleep 5
+        fi
     done
 }
 
@@ -414,8 +510,8 @@ check_resources() {
 }
 
 init
-check_resources  # Check resources at startup
-trap "echo -e '\n${GREEN}✅ Stopped gracefully${NC}'; tmux kill-session -t 'GEN' 2>/dev/null; exit 0" SIGINT
+check_resources
+trap 'log "INFO" "Received SIGINT, shutting down gracefully..."; echo -e "\n${GREEN}✅ Stopped gracefully${NC}"; tmux kill-session -t "GEN" 2>/dev/null; kill $RESOURCE_MONITOR_PID 2>/dev/null; exit 0' SIGINT
 if [ -d "$SWARM_DIR" ] && [ -f "$SWARM_DIR/run_rl_swarm.sh" ]; then
     echo -e "${GREEN}✅ Node already installed, proceeding to unzip files and run...${NC}"
     unzip_files

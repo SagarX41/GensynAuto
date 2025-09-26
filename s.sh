@@ -1,5 +1,4 @@
 #!/bin/bash
-#AAAA
 # Color setup
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
@@ -24,10 +23,12 @@ LOG_FILE="$HOME/swarm_log.txt"
 SWAP_FILE="/swapfile"
 REPO_URL="https://github.com/gensyn-ai/rl-swarm.git"
 TEMP_DATA_DIR="$SWARM_DIR/modal-login/temp-data"
+NODE_LOG="$SWARM_DIR/node.log"
 
 # Global Variables
 KEEP_TEMP_DATA=true
 JUST_EXTRACTED_PEM=false
+NODE_INIT_WAIT=600  # Wait time for node initialization (in seconds, default 10 minutes)
 
 # Logging
 log() {
@@ -65,7 +66,7 @@ install_unzip() {
     fi
 }
 
-# Unzip files from HOME
+# Unzip files from HOME (no validation)
 unzip_files() {
     ZIP_FILE=$(find "$HOME" -maxdepth 1 -type f -name "*.zip" | head -n 1)
     
@@ -100,12 +101,11 @@ unzip_files() {
     fi
 }
 
-
 # Dependencies
 install_deps() {
     log "INFO" "🔄 Updating package list..."
     sudo apt update -y
-    sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof ufw jq perl gnupg
+    sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof ufw jq perl gnupg tmux
     log "INFO" "🟢 Installing Node.js 20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
     sudo apt install -y nodejs
@@ -179,6 +179,10 @@ clone_repo() {
     sudo rm -rf "$SWARM_DIR" 2>/dev/null
     log "INFO" "📥 Cloning repository..."
     git clone "$REPO_URL" "$SWARM_DIR" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log "ERROR" "❌ Failed to clone repository from $REPO_URL"
+        exit 1
+    fi
     cd "$SWARM_DIR"
     log "INFO" "✅ Repository cloned to $SWARM_DIR"
 }
@@ -230,15 +234,89 @@ install_python_packages() {
     TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
     if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ]; then
         pip install --force-reinstall transformers==4.51.3 trl==0.19.1
+        if [ $? -ne 0 ]; then
+            log "ERROR" "❌ Failed to install Python packages"
+            exit 1
+        fi
         log "INFO" "✅ Installed transformers==4.51.3 and trl==0.19.1"
     else
         log "INFO" "ℹ️ Required Python packages already installed"
     fi
-    pip freeze | grep -E '^(transformers|trl)=='
+    pip freeze | grep -E '^(transformers|trl)==' >> "$LOG_FILE"
 }
 
-has_error() {
-    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)' "$LOG_FILE"
+# Check Gensyn Node Status
+check_gensyn_node_status() {
+    log "INFO" "🔍 Checking Gensyn node status..."
+    echo -e "${CYAN}${BOLD}🔍 Gensyn Node Status${NC}"
+
+    if ! tmux has-session -t "GEN" 2>/dev/null; then
+        log "ERROR" "❌ No tmux session 'GEN' found"
+        echo -e "${RED}❌ Node Status: OFFLINE (No tmux session 'GEN' found)${NC}"
+        return 1
+    fi
+
+    TMUX_OUTPUT=$(tmux capture-pane -t "GEN" -p -S -200 2>/dev/null)
+    echo "$TMUX_OUTPUT" >> "$NODE_LOG"
+    log "INFO" "Captured tmux session output for debugging"
+
+    local status_indicators=("Map: 100%" "Node running successfully" "Connected to network")
+    local indicator_found=false
+    for indicator in "${status_indicators[@]}"; do
+        if echo "$TMUX_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
+            indicator_found=true
+            log "INFO" "✅ Node is LIVE (Indicator: '$indicator' found in tmux session 'GEN')"
+            echo -e "${GREEN}✅ Node Status: LIVE ($indicator found)${NC}"
+            return 0
+        fi
+    done
+
+    local retries=3
+    local attempt=1
+    while [ $attempt -le $retries ]; do
+        log "WARN" "⚠️ Node status check attempt $attempt/$retries: No status indicators found"
+        sleep 10
+        TMUX_OUTPUT=$(tmux capture-pane -t "GEN" -p -S -200 2>/dev/null)
+        echo "$TMUX_OUTPUT" >> "$NODE_LOG"
+        for indicator in "${status_indicators[@]}"; do
+            if echo "$TMUX_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
+                indicator_found=true
+                log "INFO" "✅ Node is LIVE after retry (Indicator: '$indicator' found)"
+                echo -e "${GREEN}✅ Node Status: LIVE ($indicator found)${NC}"
+                return 0
+            fi
+        done
+        ((attempt++))
+    done
+
+    log "ERROR" "❌ Node is OFFLINE (No status indicators found after $retries retries)"
+    echo -e "${RED}❌ Node Status: OFFLINE (No status indicators found)${NC}"
+    return 1
+}
+
+# Monitor system resources
+monitor_resources() {
+    while true; do
+        log "INFO" "🔍 Checking system resources..."
+        FREE_MEM=$(free -m | awk '/Mem:/ {print $4}')
+        CPU_USAGE=$(top -bn1 | head -n 3 | grep "Cpu(s)" | awk '{print $2}' | cut -d. -f1)
+        DISK_FREE=$(df -h / | tail -n 1 | awk '{print $4}' | sed 's/G//')
+        log "INFO" "Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB"
+        echo -e "${CYAN}Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB${NC}"
+        if [ "$FREE_MEM" -lt 500 ]; then
+            log "WARN" "⚠️ Low memory (${FREE_MEM}MB free), may cause node crashes"
+            echo -e "${YELLOW}⚠️ Low memory (${FREE_MEM}MB free), consider increasing swap or freeing memory${NC}"
+        fi
+        if [ "$CPU_USAGE" -gt 80 ]; then
+            log "WARN" "⚠️ High CPU usage (${CPU_USAGE}%), may slow down node startup"
+            echo -e "${YELLOW}⚠️ High CPU usage (${CPU_USAGE}%), consider reducing load${NC}"
+        fi
+        if (( $(echo "$DISK_FREE < 5" | bc -l) )); then
+            log "WARN" "⚠️ Low disk space (${DISK_FREE}GB free), may cause issues"
+            echo -e "${YELLOW}⚠️ Low disk space (${DISK_FREE}GB free), consider freeing space${NC}"
+        fi
+        sleep 300
+    done
 }
 
 # Install node
@@ -249,7 +327,6 @@ install_node() {
     KEEP_TEMP_DATA=true
     export KEEP_TEMP_DATA
 
-    # Spinner helper
     spinner() {
         local pid=$1
         local msg="$2"
@@ -263,7 +340,6 @@ install_node() {
         printf "\r$msg ✅ Done"; tput el; echo
     }
 
-    # Step 1: Install dependencies, clone repo, modify scripts
     ( install_deps ) & spinner $! "📦 Installing dependencies"
     ( clone_repo ) & spinner $! "📥 Cloning repo"
     ( modify_run_script ) & spinner $! "🧠 Modifying run script"
@@ -313,30 +389,85 @@ run_node() {
     install_python_packages
     : "${PARTICIPATE_AI_MARKET:=Y}"
 
-    while true; do
-        LOG_FILE="$SWARM_DIR/node.log"
-        : > "$LOG_FILE"  
+    monitor_resources &
+    RESOURCE_MONITOR_PID=$!
+    log "INFO" "Started resource monitoring (PID: $RESOURCE_MONITOR_PID)"
 
-        KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$LOG_FILE"
+    while true; do
+        echo "=== Node Restart: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$NODE_LOG"
+
+        log "INFO" "Starting tmux session 'GEN'..."
+        tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee -a $NODE_LOG
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
-EOF
-
-        if has_error; then
-            log "ERROR" "❌ Critical error detected, restarting in 5 seconds..."
-            echo -e "${RED}❌ Critical error detected. Restarting in 5 seconds...${NC}"
-        else
-            log "WARN" "⚠️ Node exited without critical error, restarting in 5 seconds..."
-            echo -e "${YELLOW}⚠️ Node exited (non-critical). Restarting in 5 seconds...${NC}"
+EOF"
+        if [ $? -ne 0 ]; then
+            log "ERROR" "❌ Failed to start tmux session 'GEN'"
+            echo -e "${RED}❌ Failed to start tmux session 'GEN'${NC}"
+            sleep 5
+            continue
         fi
 
-        sleep 5
+        log "INFO" "Waiting $((NODE_INIT_WAIT/60)) minutes for node to initialize..."
+        echo -e "${CYAN}⏳ Waiting $((NODE_INIT_WAIT/60)) minutes for node to initialize...${NC}"
+        sleep "$NODE_INIT_WAIT"
+
+        if ! tmux has-session -t "GEN" 2>/dev/null; then
+            log "WARN" "⚠️ Node exited during initialization (tmux session 'GEN' terminated), restarting in 5 seconds..."
+            echo -e "${YELLOW}⚠️ Node exited during initialization. Restarting in 5 seconds...${NC}"
+            sleep 5
+            continue
+        fi
+
+        check_gensyn_node_status
+        if [ $? -eq 0 ]; then
+            log "INFO" "Node is running, entering monitoring loop..."
+            while tmux has-session -t "GEN" 2>/dev/null; do
+                check_gensyn_node_status
+                if [ $? -ne 0 ]; then
+                    log "ERROR" "❌ Node is OFFLINE or crashed, restarting in 5 seconds..."
+                    echo -e "${RED}❌ Node is OFFLINE or crashed. Restarting in 5 seconds...${NC}"
+                    tmux kill-session -t "GEN" 2>/dev/null
+                    sleep 5
+                    break
+                fi
+                sleep 10
+            done
+        else
+            log "ERROR" "❌ Node failed to start properly, restarting in 5 seconds..."
+            echo -e "${RED}❌ Node failed to start properly. Restarting in 5 seconds...${NC}"
+            tmux kill-session -t "GEN" 2>/dev/null
+            sleep 5
+        fi
     done
-}  
+}
+
+# Check system resources
+check_resources() {
+    log "INFO" "🔍 Checking system resources..."
+    FREE_MEM=$(free -m | awk '/Mem:/ {print $4}')
+    CPU_USAGE=$(top -bn1 | head -n 3 | grep "Cpu(s)" | awk '{print $2}' | cut -d. -f1)
+    DISK_FREE=$(df -h / | tail -n 1 | awk '{print $4}' | sed 's/G//')
+    log "INFO" "Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB"
+    echo -e "${CYAN}Memory Free: ${FREE_MEM}MB, CPU Usage: ${CPU_USAGE}%, Disk Free: ${DISK_FREE}GB${NC}"
+    if [ "$FREE_MEM" -lt 500 ]; then
+        log "WARN" "⚠️ Low memory (${FREE_MEM}MB free), may cause node crashes"
+        echo -e "${YELLOW}⚠️ Low memory (${FREE_MEM}MB free), consider increasing swap or freeing memory${NC}"
+    fi
+    if [ "$CPU_USAGE" -gt 80 ]; then
+        log "WARN" "⚠️ High CPU usage (${CPU_USAGE}%), may slow down node startup"
+        echo -e "${YELLOW}⚠️ High CPU usage (${CPU_USAGE}%), consider reducing load${NC}"
+    fi
+    if (( $(echo "$DISK_FREE < 5" | bc -l) )); then
+        log "WARN" "⚠️ Low disk space (${DISK_FREE}GB free), may cause issues"
+        echo -e "${YELLOW}⚠️ Low disk space (${DISK_FREE}GB free), consider freeing space${NC}"
+    fi
+}
 
 init
-trap "echo -e '\n${GREEN}✅ Stopped gracefully${NC}'; exit 0" SIGINT
+check_resources
+trap 'log "INFO" "Received SIGINT, shutting down gracefully..."; echo -e "\n${GREEN}✅ Stopped gracefully${NC}"; tmux kill-session -t "GEN" 2>/dev/null; kill $RESOURCE_MONITOR_PID 2>/dev/null; exit 0' SIGINT
 if [ -d "$SWARM_DIR" ] && [ -f "$SWARM_DIR/run_rl_swarm.sh" ]; then
     echo -e "${GREEN}✅ Node already installed, proceeding to unzip files and run...${NC}"
     unzip_files
@@ -346,4 +477,3 @@ else
     install_node
     run_node
 fi
-

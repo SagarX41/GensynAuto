@@ -1,5 +1,5 @@
 #!/bin/bash
-# Color setup
+# Color setup AAAAAA
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -384,17 +384,22 @@ run_node() {
     cd "$SWARM_DIR"
     fix_swarm_pem_permissions
     manage_swap
-    python3 -m venv .venv
-    source .venv/bin/activate
-    install_python_packages
-    : "${PARTICIPATE_AI_MARKET:=Y}"
-
-    monitor_resources &
-    RESOURCE_MONITOR_PID=$!
-    log "INFO" "Started resource monitoring (PID: $RESOURCE_MONITOR_PID)"
 
     while true; do
         echo "=== Node Restart: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$NODE_LOG"
+
+        # Clean and recreate virtual environment
+        log "INFO" "🧹 Cleaning and recreating virtual environment..."
+        rm -rf .venv
+        python3 -m venv .venv
+        source .venv/bin/activate
+        install_python_packages
+
+        : "${PARTICIPATE_AI_MARKET:=Y}"
+
+        monitor_resources &  # Start resource monitor
+        RESOURCE_MONITOR_PID=$!
+        log "INFO" "Started resource monitoring (PID: $RESOURCE_MONITOR_PID)"
 
         log "INFO" "Starting tmux session 'GEN'..."
         tmux new-session -d -s "GEN" "KEEP_TEMP_DATA=$KEEP_TEMP_DATA ./run_rl_swarm.sh <<EOF | tee -a $NODE_LOG
@@ -402,6 +407,7 @@ $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
 EOF"
+
         if [ $? -ne 0 ]; then
             log "ERROR" "❌ Failed to start tmux session 'GEN'"
             echo -e "${RED}❌ Failed to start tmux session 'GEN'${NC}"
@@ -416,6 +422,7 @@ EOF"
         if ! tmux has-session -t "GEN" 2>/dev/null; then
             log "WARN" "⚠️ Node exited during initialization (tmux session 'GEN' terminated), restarting in 5 seconds..."
             echo -e "${YELLOW}⚠️ Node exited during initialization. Restarting in 5 seconds...${NC}"
+            kill "$RESOURCE_MONITOR_PID" 2>/dev/null
             sleep 5
             continue
         fi
@@ -429,6 +436,7 @@ EOF"
                     log "ERROR" "❌ Node is OFFLINE or crashed, restarting in 5 seconds..."
                     echo -e "${RED}❌ Node is OFFLINE or crashed. Restarting in 5 seconds...${NC}"
                     tmux kill-session -t "GEN" 2>/dev/null
+                    kill "$RESOURCE_MONITOR_PID" 2>/dev/null
                     sleep 5
                     break
                 fi
@@ -438,6 +446,7 @@ EOF"
             log "ERROR" "❌ Node failed to start properly, restarting in 5 seconds..."
             echo -e "${RED}❌ Node failed to start properly. Restarting in 5 seconds...${NC}"
             tmux kill-session -t "GEN" 2>/dev/null
+            kill "$RESOURCE_MONITOR_PID" 2>/dev/null
             sleep 5
         fi
     done

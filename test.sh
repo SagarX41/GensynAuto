@@ -1,6 +1,6 @@
 #!/bin/bash
 # set -e
-#AAA
+#AAAAS
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)

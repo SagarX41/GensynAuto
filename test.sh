@@ -31,7 +31,7 @@ NODE_LOG="$SWARM_DIR/node.log"
 
 # Global Variables
 KEEP_TEMP_DATA=true
-NODE_INIT_WAIT=600  # Wait time for node initialization (in seconds, default 10 minutes)
+NODE_INIT_WAIT=1200  # Wait time for node initialization (in seconds, default 10 minutes)
 
 # Logging
 log() {

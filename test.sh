@@ -1,6 +1,6 @@
 #!/bin/bash
 # set -e
-
+#AAAAAAAAAAAAAA
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -27,15 +27,9 @@ CONFIG_FILE="$SWARM_DIR/.swarm_config"
 LOG_FILE="$HOME/swarm_log.txt"
 SWAP_FILE="/swapfile"
 REPO_URL="https://github.com/gensyn-ai/rl-swarm.git"
-NODE_LOG="$SWARM_DIR/node.log"
 
 # Global Variables
 KEEP_TEMP_DATA=true
-
-# Ensure UTF-8 encoding and terminal width for consistent log rendering
-export LC_ALL=en_US.UTF-8
-export LANG=en_US.UTF-8
-export COLUMNS=180
 
 # Logging
 log() {
@@ -81,7 +75,7 @@ install_deps() {
     sudo apt update -y
 
     echo "📦 Installing essential packages..."
-    sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof ufw jq perl gnupg unzip
+    sudo apt install -y python3 python3-venv python3-pip curl wget screen git lsof ufw jq perl gnupg
 
     echo "🟢 Installing Node.js 20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
@@ -135,6 +129,51 @@ run_fixall() {
         echo -e "${RED}❌ Failed to apply fixes!${NC}"
     fi
     sleep 5
+}
+
+# Modify run script
+modify_run_script() {
+    local run_script="$SWARM_DIR/run_rl_swarm.sh"
+
+    if [ -f "$run_script" ]; then
+        # 1. Preserve shebang line and remove old KEEP_TEMP_DATA definition
+        awk '
+        NR==1 && $0 ~ /^#!\/bin\/bash/ { print; next }
+        $0 !~ /^\s*: "\$\{KEEP_TEMP_DATA:=.*\}"/ { print }
+        ' "$run_script" > "$run_script.tmp" && mv "$run_script.tmp" "$run_script"
+
+        # 2. Inject new KEEP_TEMP_DATA just after #!/bin/bash
+        sed -i '1a : "${KEEP_TEMP_DATA:='"$KEEP_TEMP_DATA"'}"' "$run_script"
+
+        # 3. Patch rm logic only if not already patched
+        if grep -q 'rm -r \$ROOT_DIR/modal-login/temp-data/\*\.json' "$run_script" && \
+           ! grep -q 'if \[ "\$KEEP_TEMP_DATA" != "true" \]; then' "$run_script"; then
+            perl -i -pe '
+                s#rm -r \$ROOT_DIR/modal-login/temp-data/\*\.json 2> /dev/null \|\| true#
+if [ "\$KEEP_TEMP_DATA" != "true" ]; then
+    rm -r \$ROOT_DIR/modal-login/temp-data/*.json 2> /dev/null || true
+fi#' "$run_script"
+        fi
+    fi
+}
+
+has_error() {
+    ! tail -n 30 "$LOG_FILE" | grep -qE '(Map: 100%|Node running successfully|Connected to network)'
+}
+
+fix_kill_command() {
+    local run_script="$SWARM_DIR/run_rl_swarm.sh"
+
+    if [ -f "$run_script" ]; then
+        if grep -q 'kill -- -\$\$ || true' "$run_script"; then
+            perl -i -pe 's#kill -- -\$\$ \|\| true#kill -TERM -- -\$\$ 2>/dev/null || true#' "$run_script"
+            log "INFO" "✅ Fixed kill command in $run_script to suppress errors"
+        else
+            log "INFO" "ℹ️ Kill command already updated or not found"
+        fi
+    else
+        log "ERROR" "❌ run_rl_swarm.sh not found at $run_script"
+    fi
 }
 
 # Clone Repository
@@ -329,6 +368,7 @@ install_node() {
 
     ( install_deps ) & spinner $! "📦 Installing dependencies"
     ( clone_repo ) & spinner $! "📥 Cloning repo"
+    ( modify_run_script ) & spinner $! "🧠 Modifying run script"
 
     if [ -f "$HOME/swarm.pem" ]; then
         sudo cp "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
@@ -401,6 +441,7 @@ install_downgraded_node() {
 
     ( install_deps ) & spinner $! "📦 Installing dependencies"
     ( clone_downgraded_repo ) & spinner $! "📥 Cloning repo"
+    ( modify_run_script ) & spinner $! "🧠 Modifying run script"
 
     if [ -f "$HOME/swarm.pem" ]; then
         sudo cp "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
@@ -412,79 +453,6 @@ install_downgraded_node() {
     echo -e "${YELLOW}${BOLD}👉 Press Enter to return to the menu...${NC}"
     read
     sleep 1
-}
-
-# Check Gensyn Node Status
-check_gensyn_node_status() {
-    log "INFO" "🔍 Checking Gensyn node status from $NODE_LOG..."
-
-    LOG_OUTPUT=$(tail -n 200 "$NODE_LOG" 2>/dev/null)
-
-    local status_indicators=("Map: 100%" "Node running successfully" "Connected to network" "Training started")
-    local indicator_found=false
-    for indicator in "${status_indicators[@]}"; do
-        if echo "$LOG_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
-            indicator_found=true
-            log "INFO" "✅ Node is LIVE (Indicator: '$indicator' found in log)"
-            return 0
-        fi
-    done
-
-    local retries=3
-    local attempt=1
-    while [ $attempt -le $retries ]; do
-        log "WARN" "⚠️ Node status check attempt $attempt/$retries: No status indicators found"
-        sleep 10
-        LOG_OUTPUT=$(tail -n 200 "$NODE_LOG" 2>/dev/null)
-        for indicator in "${status_indicators[@]}"; do
-            if echo "$LOG_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
-                indicator_found=true
-                log "INFO" "✅ Node is LIVE after retry (Indicator: '$indicator' found)"
-                return 0
-            fi
-        done
-        ((attempt++))
-    done
-
-    log "ERROR" "❌ Node is OFFLINE (No status indicators found after $retries retries)"
-    return 1
-}
-
-has_error() {
-    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception|Traceback)' "$NODE_LOG"
-}
-
-has_error_recent() {
-    tail -n 50 "$NODE_LOG" | grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception|Traceback)'
-}
-
-install_python_packages() {
-    TRANSFORMERS_VERSION=$(pip show transformers 2>/dev/null | grep ^Version: | awk '{print $2}')
-    TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
-    TQDM_VERSION=$(pip show tqdm 2>/dev/null | grep ^Version: | awk '{print $2}')
-    DATASETS_VERSION=$(pip show datasets 2>/dev/null | grep ^Version: | awk '{print $2}')
-
-    if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ] || [ "$TQDM_VERSION" != "4.66.5" ] || [ "$DATASETS_VERSION" != "3.0.1" ]; then
-        pip install --force-reinstall transformers==4.51.3 trl==0.19.1 tqdm==4.66.5 datasets==3.0.1
-    fi
-    pip freeze | grep -E '^(transformers|trl|tqdm|datasets)=='
-}
-
-# Kill old node processes
-kill_old_node_processes() {
-    log "INFO" "🔪 Checking for and killing old run_rl_swarm.sh processes..."
-    pids=$(pgrep -f "run_rl_swarm.sh" | grep -v "$$")
-    if [ -n "$pids" ]; then
-        for pid in $pids; do
-            kill -TERM "$pid" 2>/dev/null
-            wait "$pid" 2>/dev/null || true
-            log "INFO" "✅ Killed old node process (PID: $pid)"
-            echo -e "${CYAN}✅ Killed old node process (PID: $pid)${NC}"
-        done
-    else
-        log "INFO" "ℹ️ No old node processes found"
-        echo -e "${CYAN}ℹ️ No old node processes found${NC}"
-    fi
 }
 
 # Run Node
@@ -558,7 +526,9 @@ run_node() {
     # Ensure KEEP_TEMP_DATA is set
     : "${KEEP_TEMP_DATA:=true}"
     export KEEP_TEMP_DATA
+    modify_run_script
     sudo chmod +x "$SWARM_DIR/run_rl_swarm.sh"
+    fix_kill_command
     
     case $run_choice in
         1)
@@ -571,95 +541,21 @@ run_node() {
             install_python_packages
             : "${PARTICIPATE_AI_MARKET:=Y}"
             while true; do
-                : > "$NODE_LOG"
-                echo "=== Node Restart: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$NODE_LOG"
-
-                # Kill any existing node processes
-                kill_old_node_processes
-
-                # Reset venv on every restart
-                log "INFO" "🔄 Resetting Python virtual environment..."
-                rm -rf .venv
-                python3 -m venv .venv
-                source .venv/bin/activate
-                pip install --upgrade pip setuptools wheel --no-cache-dir
-                install_python_packages
-
-                # Run in background with unbuffered output
-                export COLUMNS=180
-                stdbuf -oL ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF &
+                LOG_FILE="$SWARM_DIR/node.log"
+                : > "$LOG_FILE"
+                KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$LOG_FILE"
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
 EOF
-                NODE_PID=$!
-                log "INFO" "Started node process (PID: $NODE_PID)"
-                echo -e "${CYAN}Started node process (PID: $NODE_PID)${NC}"
-
-                # Start tailing logs immediately, filtering for official-style logs
-                tail -f "$NODE_LOG" | grep -E 'Map: 100%|.*Joining round|Starting round' &
-                TAIL_PID=$!
-                log "INFO" "Started tailing node.log with filter (PID: $TAIL_PID)"
-
-                # Background status check
-                (
-                    sleep 10
-                    check_gensyn_node_status
-                    if [ $? -ne 0 ]; then
-                        log "ERROR" "❌ Node failed to initialize properly, killing and restarting..."
-                        echo -e "${RED}❌ Node failed to initialize. Killing and restarting in 5 seconds...${NC}"
-                        kill -TERM "$NODE_PID" 2>/dev/null
-                        wait "$NODE_PID" 2>/dev/null || true
-                        kill -TERM "$TAIL_PID" 2>/dev/null
-                        wait "$TAIL_PID" 2>/dev/null || true
-                        exit 1
-                    fi
-                ) &
-                STATUS_PID=$!
-
-                # Monitoring loop
-                while kill -0 "$NODE_PID" 2>/dev/null; do
-                    if has_error_recent; then
-                        log "ERROR" "❌ Critical error detected in recent log, killing and restarting..."
-                        echo -e "${RED}❌ Critical error detected. Killing and restarting in 5 seconds...${NC}"
-                        kill -TERM "$NODE_PID" 2>/dev/null
-                        wait "$NODE_PID" 2>/dev/null || true
-                        kill -TERM "$TAIL_PID" 2>/dev/null
-                        wait "$TAIL_PID" 2>/dev/null || true
-                        kill -TERM "$STATUS_PID" 2>/dev/null
-                        wait "$STATUS_PID" 2>/dev/null || true
-                        sleep 5
-                        break
-                    fi
-                    check_gensyn_node_status
-                    if [ $? -ne 0 ]; then
-                        log "ERROR" "❌ Node went OFFLINE, killing and restarting..."
-                        echo -e "${RED}❌ Node went OFFLINE. Killing and restarting in 5 seconds...${NC}"
-                        kill -TERM "$NODE_PID" 2>/dev/null
-                        wait "$NODE_PID" 2>/dev/null || true
-                        kill -TERM "$TAIL_PID" 2>/dev/null
-                        wait "$TAIL_PID" 2>/dev/null || true
-                        kill -TERM "$STATUS_PID" 2>/dev/null
-                        wait "$STATUS_PID" 2>/dev/null || true
-                        sleep 5
-                        break
-                    fi
-                    sleep 10
-                done
-                if ! kill -0 "$NODE_PID" 2>/dev/null; then
-                    if has_error; then
-                        log "ERROR" "❌ Node exited with critical error, restarting..."
-                        echo -e "${RED}❌ Node exited (critical error). Restarting in 5 seconds...${NC}"
-                    else
-                        log "WARN" "⚠️ Node exited without critical error, restarting..."
-                        echo -e "${YELLOW}⚠️ Node exited (non-critical). Restarting in 5 seconds...${NC}"
-                    fi
-                    kill -TERM "$TAIL_PID" 2>/dev/null
-                    wait "$TAIL_PID" 2>/dev/null || true
-                    kill -TERM "$STATUS_PID" 2>/dev/null
-                    wait "$STATUS_PID" 2>/dev/null || true
-                    sleep 5
+                if has_error; then
+                    log "ERROR" "❌ Critical error detected (no success indicators), restarting in 5 seconds..."
+                    echo -e "${RED}❌ Critical error detected (no success indicators). Restarting in 5 seconds...${NC}"
+                else
+                    log "WARN" "⚠️ Node exited with success indicators, restarting in 5 seconds..."
+                    echo -e "${YELLOW}⚠️ Node exited (with success indicators). Restarting in 5 seconds...${NC}"
                 fi
+                sleep 5
             done
             ;;
         2)
@@ -671,9 +567,9 @@ EOF
             source .venv/bin/activate
             install_python_packages
             : "${PARTICIPATE_AI_MARKET:=Y}"
-            : > "$NODE_LOG"
-            export COLUMNS=180
-            stdbuf -oL ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" | grep -E 'Map: 100%|.*Joining round|Starting round' <<EOF
+            LOG_FILE="$SWARM_DIR/node.log"
+            : > "$LOG_FILE"
+            KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$LOG_FILE"
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
@@ -726,6 +622,7 @@ update_node() {
 
     ( install_deps ) & spinner $! "📦 Installing dependencies"
     ( clone_repo ) & spinner $! "📥 Cloning repo"
+    ( modify_run_script ) & spinner $! "🧠 Modifying run script"
 
     if [ -f "$HOME/swarm.pem" ]; then
         sudo cp "$HOME/swarm.pem" "$SWARM_DIR/swarm.pem"
@@ -755,6 +652,42 @@ reset_peer() {
     sleep 5
 }
 
+install_python_packages() {
+    TRANSFORMERS_VERSION=$(pip show transformers 2>/dev/null | grep ^Version: | awk '{print $2}')
+    TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
+
+    if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ]; then
+        pip install --force-reinstall transformers==4.51.3 trl==0.19.1
+    fi
+    pip freeze | grep -E '^(transformers|trl)=='
+}
+
+# View Logs & Status
+view_logs() {
+    show_header
+    echo -e "${CYAN}${BOLD}📜 NODE LOGS & STATUS${NC}"
+    echo -e "${YELLOW}===============================================================================${NC}"
+
+    NODE_LOG="$SWARM_DIR/node.log"
+    if [ -f "$NODE_LOG" ]; then
+        echo -e "\n${BOLD}Last 50 lines of node.log:${NC}"
+        tail -n 50 "$NODE_LOG"
+
+        echo -e "\n${BOLD}Status Check:${NC}"
+        if tail -n 30 "$NODE_LOG" | grep -qE '(Map: 100%|Node running successfully|Connected to network)'; then
+            echo -e "${GREEN}✅ Node appears to be active (success indicators found in recent logs)${NC}"
+        else
+            echo -e "${RED}❌ Node may not be active or has errors (no success indicators in last 30 lines)${NC}"
+        fi
+    else
+        echo -e "${RED}❌ Node log file not found. Node may not have been run yet.${NC}"
+    fi
+
+    echo -e "${YELLOW}${BOLD}👉 Press Enter to return to the menu...${NC}"
+    read
+    sleep 1
+}
+
 # Main Menu
 main_menu() {
     while true; do
@@ -763,14 +696,15 @@ main_menu() {
         echo "1. 🛠  Install/Reinstall Node"
         echo "2. 🚀  Run Node"
         echo "3. ⚙️  Update Node"
-        echo "4. 🔥  Change Configuration"
+        echo '4. 🔥  Change Configuration'
         echo "5. ♻️  Reset Peer ID"
         echo "6. 🗑️  Delete Everything & Start New"
         echo "7. 📉  Downgrade Version"
-        echo "8. ❌ Exit"
+        echo "8. 📜  View Logs & Status"
+        echo "9. ❌ Exit"
         echo -e "${GREEN}===============================================================================${NC}"
         
-        read -p "${BOLD}${YELLOW}➡️ Select option [1-8]: ${NC}" choice
+        read -p "${BOLD}${YELLOW}➡️ Select option [1-9]: ${NC}" choice
         
         case $choice in
             1) install_node ;;
@@ -798,7 +732,8 @@ main_menu() {
                 fi
                 ;;
             7) install_downgraded_node ;;
-            8)
+            8) view_logs ;;
+            9)
                 echo -e "\n${GREEN}✅ Exiting... Thank you for using Hustle Manager!${NC}"
                 exit 0
                 ;;

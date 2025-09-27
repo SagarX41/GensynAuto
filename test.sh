@@ -181,6 +181,7 @@ fix_kill_command() {
 clone_repo() {
     sudo rm -rf "$SWARM_DIR" 2>/dev/null
     git clone "$REPO_URL" "$SWARM_DIR" >/dev/null 2>&1
+ thresh
     cd "$SWARM_DIR"
 }
 
@@ -560,28 +561,29 @@ EOF
                 while true; do
                     if ! ps -p $pid > /dev/null; then
                         if has_error; then
-                            log "ERROR" "❌ Node stopped without success indicators, restarting with fresh venv in 5 seconds..."
-                            echo -e "${RED}❌ Node stopped without success indicators. Restarting with fresh venv in 5 seconds...${NC}"
+                            log "ERROR" "❌ Node stopped without success logs, restarting with fresh venv in 5 seconds..."
+                            echo -e "${RED}❌ Node stopped without success logs. Restarting with fresh venv in 5 seconds...${NC}"
                             sleep 5
                             setup_venv
                             break
                         else
-                            log "WARN" "⚠️ Node exited with success indicators, restarting with fresh venv in 5 seconds..."
-                            echo -e "${YELLOW}⚠️ Node exited with success indicators. Restarting with fresh venv in 5 seconds...${NC}"
+                            log "WARN" "⚠️ Node exited with success logs, restarting with fresh venv in 5 seconds..."
+                            echo -e "${YELLOW}⚠️ Node exited with success logs. Restarting with fresh venv in 5 seconds...${NC}"
                             sleep 5
                             setup_venv
                             break
                         fi
                     fi
                     if has_error; then
-                        log "ERROR" "❌ No success indicators in last 10 minutes, restarting with fresh venv in 5 seconds..."
-                        echo -e "${RED}❌ No success indicators in last 10 minutes. Restarting with fresh venv in 5 seconds...${NC}"
+                        log "ERROR" "❌ No success logs in last 10 minutes, restarting with fresh venv in 5 seconds..."
+                        echo -e "${RED}❌ No success logs in last 10 minutes. Restarting with fresh venv in 5 seconds...${NC}"
                         kill -TERM $pid 2>/dev/null || true
                         sleep 5
                         setup_venv
                         break
                     fi
-                    log "INFO" "Node running, checking again in 10 minutes..."
+                    log "INFO" "✅ Node running with success logs, checking again in 10 minutes..."
+                    echo -e "${GREEN}✅ Node running with success logs. Checking again in 10 minutes...${NC}"
                     sleep 600
                 done
             done
@@ -701,9 +703,9 @@ view_logs() {
 
         echo -e "\n${BOLD}Status Check:${NC}"
         if tail -n 30 "$NODE_LOG" | grep -qE '(Map: 100%|Node running successfully|Connected to network)'; then
-            echo -e "${GREEN}✅ Node appears to be active (success indicators found in recent logs)${NC}"
+            echo -e "${GREEN}✅ Node appears to be active (success logs found in recent logs)${NC}"
         else
-            echo -e "${RED}❌ Node may not be active or has errors (no success indicators in last 30 lines)${NC}"
+            echo -e "${RED}❌ Node may not be active or has errors (no success logs in last 30 lines)${NC}"
         fi
     else
         echo -e "${RED}❌ Node log file not found. Node may not have been run yet.${NC}"

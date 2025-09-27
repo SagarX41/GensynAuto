@@ -1,6 +1,6 @@
 #!/bin/bash
 # set -e
-#AAAAAAAAAAAAAAAAAAAAAAAAAA
+
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -453,14 +453,14 @@ install_downgraded_node() {
     sleep 1
 }
 
-# Check Gensyn Node Status (adapted to check log file)
+# Check Gensyn Node Status
 check_gensyn_node_status() {
     log "INFO" "🔍 Checking Gensyn node status from $NODE_LOG..."
     echo -e "${CYAN}${BOLD}🔍 Gensyn Node Status${NC}"
 
     LOG_OUTPUT=$(tail -n 200 "$NODE_LOG" 2>/dev/null)
 
-    local status_indicators=("Map: 100%" "Node running successfully" "Connected to network")
+    local status_indicators=("Map: 100%" "Node running successfully" "Connected to network" "Training started")
     local indicator_found=false
     for indicator in "${status_indicators[@]}"; do
         if echo "$LOG_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
@@ -494,11 +494,11 @@ check_gensyn_node_status() {
 }
 
 has_error() {
-    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)' "$NODE_LOG"
+    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception|Traceback)' "$NODE_LOG"
 }
 
 has_error_recent() {
-    tail -n 50 "$NODE_LOG" | grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)'
+    tail -n 50 "$NODE_LOG" | grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception|Traceback)'
 }
 
 install_python_packages() {
@@ -569,7 +569,7 @@ run_node() {
     printf "${BOLD}%-3s %-40s${NC}\n" "2." "Qwen/Qwen3-0.6B"
     printf "${BOLD}%-3s %-40s${NC}\n" "3." "nvidia/AceInstruct-1.5B"
     printf "${BOLD}%-3s %-40s${NC}\n" "4." "dnotitia/Smoothie-Qwen3-1.7B"
-    printf "${BOLD}%-3s %-40s${NC}\n" "5." "Gensyn/Qwen2.5-1.5B-Instruct" 
+    printf "${BOLD}%-3s %-40s${NC}\n" "5." "Gensyn/Qwen2.5-1.5B-Instruct"
     printf "${BOLD}%-3s %-40s${NC}\n" "6." "Custom model"
     echo -e "${YELLOW}-------------------------------------------------${NC}"
     read -p "$(echo -e "${BOLD}Choose model [0-6] (Enter = keep current: ${MODEL_NAME:-None}): ${NC}")" model_choice
@@ -628,16 +628,26 @@ run_node() {
                 pip install --upgrade pip setuptools wheel --no-cache-dir
                 install_python_packages
 
-                # Run in background with input, showing output in terminal and logging
-                KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF &
+                # Run in background with unbuffered output
+                stdbuf -oL KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF &
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
 EOF
                 NODE_PID=$!
                 log "INFO" "Started node process (PID: $NODE_PID)"
+                echo -e "${CYAN}Started node process (PID: $NODE_PID)${NC}"
+
+                # Tail logs in background for real-time display
+                tail -f "$NODE_LOG" &
+                TAIL_PID=$!
+                log "INFO" "Started tailing node.log (PID: $TAIL_PID)"
 
                 sleep "$NODE_INIT_WAIT"
+
+                # Stop tailing after initialization
+                kill -TERM "$TAIL_PID" 2>/dev/null
+                wait "$TAIL_PID" 2>/dev/null || true
 
                 if ! kill -0 "$NODE_PID" 2>/dev/null; then
                     log "WARN" "⚠️ Node exited during initialization, restarting in 5 seconds..."
@@ -698,7 +708,7 @@ EOF
             install_python_packages
             : "${PARTICIPATE_AI_MARKET:=Y}"
             : > "$NODE_LOG"
-            KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF
+            stdbuf -oL KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
@@ -789,7 +799,7 @@ main_menu() {
         echo "1. 🛠  Install/Reinstall Node"
         echo "2. 🚀  Run Node"
         echo "3. ⚙️  Update Node"
-        echo '4. 🔥  Change Configuration'
+        echo "4. 🔥  Change Configuration"
         echo "5. ♻️  Reset Peer ID"
         echo "6. 🗑️  Delete Everything & Start New"
         echo "7. 📉  Downgrade Version"

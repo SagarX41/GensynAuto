@@ -1,6 +1,6 @@
 #!/bin/bash
 # set -e
-#AAAAAAAAAAAAAA
+
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -25,6 +25,7 @@ fi
 SWARM_DIR="$HOME/rl-swarm"
 CONFIG_FILE="$SWARM_DIR/.swarm_config"
 LOG_FILE="$HOME/swarm_log.txt"
+NODE_LOG="$SWARM_DIR/node.log"
 SWAP_FILE="/swapfile"
 REPO_URL="https://github.com/gensyn-ai/rl-swarm.git"
 
@@ -158,7 +159,7 @@ fi#' "$run_script"
 }
 
 has_error() {
-    ! tail -n 30 "$LOG_FILE" | grep -qE '(Map: 100%|Node running successfully|Connected to network)'
+    ! tail -n 30 "$NODE_LOG" | grep -qE '(Map: 100%|Node running successfully|Connected to network)'
 }
 
 fix_kill_command() {
@@ -214,7 +215,6 @@ fix_swarm_pem_permissions() {
 }
 
 auto_enter_inputs() {
-    # Simulate 'N' for pushing to Hugging Face
     HF_TOKEN=${HF_TOKEN:-""}
     if [ -n "${HF_TOKEN}" ]; then
         HUGGINGFACE_ACCESS_TOKEN=${HF_TOKEN}
@@ -224,7 +224,6 @@ auto_enter_inputs() {
         echo -e "${GREEN}>>> No answer was given, so NO models will be pushed to Hugging Face Hub${NC}"
     fi
 
-    # Handle AI Prediction Market participation
     if [ -n "$PARTICIPATE_AI_MARKET" ]; then
         echo -e "${GREEN}>> Would you like your model to participate in the AI Prediction Market? [Y/n] $PARTICIPATE_AI_MARKET${NC}"
     else
@@ -323,7 +322,6 @@ install_node() {
     KEEP_TEMP_DATA=$([[ "$auto_login" =~ ^[Nn]$ ]] && echo "false" || echo "true")
     export KEEP_TEMP_DATA
 
-    # Handle swarm.pem from SWARM_DIR
     if [ -f "$SWARM_DIR/swarm.pem" ]; then
         echo -e "\n${YELLOW}⚠️ Existing swarm.pem detected in SWARM_DIR!${NC}"
         echo "1. Keep and use existing Swarm.pem"
@@ -396,7 +394,6 @@ install_downgraded_node() {
     KEEP_TEMP_DATA=$([[ "$auto_login" =~ ^[Nn]$ ]] && echo "false" || echo "true")
     export KEEP_TEMP_DATA
 
-    # Handle swarm.pem from SWARM_DIR
     if [ -f "$SWARM_DIR/swarm.pem" ]; then
         echo -e "\n${YELLOW}⚠️ Existing swarm.pem detected in SWARM_DIR!${NC}"
         echo "1. Keep and use existing Swarm.pem"
@@ -523,39 +520,70 @@ run_node() {
 
     auto_enter_inputs
 
-    # Ensure KEEP_TEMP_DATA is set
     : "${KEEP_TEMP_DATA:=true}"
     export KEEP_TEMP_DATA
     modify_run_script
     sudo chmod +x "$SWARM_DIR/run_rl_swarm.sh"
     fix_kill_command
     
+    if [ ! -x "$SWARM_DIR/run_rl_swarm.sh" ]; then
+        log "ERROR" "❌ run_rl_swarm.sh is not executable or not found"
+        echo -e "${RED}❌ run_rl_swarm.sh is not executable or not found${NC}"
+        return 1
+    fi
+
+    setup_venv() {
+        log "INFO" "Setting up virtual environment..."
+        rm -rf "$SWARM_DIR/.venv"
+        python3 -m venv "$SWARM_DIR/.venv"
+        source "$SWARM_DIR/.venv/bin/activate"
+        install_python_packages
+    }
+
     case $run_choice in
         1)
             log "INFO" "Starting node in auto-restart mode"
             cd "$SWARM_DIR"
             fix_swarm_pem_permissions
             manage_swap
-            python3 -m venv .venv
-            source .venv/bin/activate
-            install_python_packages
+            setup_venv
             : "${PARTICIPATE_AI_MARKET:=Y}"
             while true; do
-                LOG_FILE="$SWARM_DIR/node.log"
-                : > "$LOG_FILE"
-                KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$LOG_FILE"
+                : > "$NODE_LOG"
+                log "INFO" "Starting node run..."
+                KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF > "$NODE_LOG" 2>&1 &
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
 EOF
-                if has_error; then
-                    log "ERROR" "❌ Critical error detected (no success indicators), restarting in 5 seconds..."
-                    echo -e "${RED}❌ Critical error detected (no success indicators). Restarting in 5 seconds...${NC}"
-                else
-                    log "WARN" "⚠️ Node exited with success indicators, restarting in 5 seconds..."
-                    echo -e "${YELLOW}⚠️ Node exited (with success indicators). Restarting in 5 seconds...${NC}"
-                fi
-                sleep 5
+                pid=$!
+                while true; do
+                    if ! ps -p $pid > /dev/null; then
+                        if has_error; then
+                            log "ERROR" "❌ Node stopped without success indicators, restarting with fresh venv in 5 seconds..."
+                            echo -e "${RED}❌ Node stopped without success indicators. Restarting with fresh venv in 5 seconds...${NC}"
+                            sleep 5
+                            setup_venv
+                            break
+                        else
+                            log "WARN" "⚠️ Node exited with success indicators, restarting with fresh venv in 5 seconds..."
+                            echo -e "${YELLOW}⚠️ Node exited with success indicators. Restarting with fresh venv in 5 seconds...${NC}"
+                            sleep 5
+                            setup_venv
+                            break
+                        fi
+                    fi
+                    if has_error; then
+                        log "ERROR" "❌ No success indicators in last 10 minutes, restarting with fresh venv in 5 seconds..."
+                        echo -e "${RED}❌ No success indicators in last 10 minutes. Restarting with fresh venv in 5 seconds...${NC}"
+                        kill -TERM $pid 2>/dev/null || true
+                        sleep 5
+                        setup_venv
+                        break
+                    fi
+                    log "INFO" "Node running, checking again in 10 minutes..."
+                    sleep 600
+                done
             done
             ;;
         2)
@@ -563,17 +591,16 @@ EOF
             cd "$SWARM_DIR"
             fix_swarm_pem_permissions
             manage_swap
-            python3 -m venv .venv
-            source .venv/bin/activate
-            install_python_packages
+            setup_venv
             : "${PARTICIPATE_AI_MARKET:=Y}"
-            LOG_FILE="$SWARM_DIR/node.log"
-            : > "$LOG_FILE"
-            KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$LOG_FILE"
+            : > "$NODE_LOG"
+            log "INFO" "Starting node run..."
+            KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF > "$NODE_LOG" 2>&1
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
 EOF
+            cat "$NODE_LOG"
             ;;
         3)
             log "INFO" "Starting fresh installation + run"
@@ -668,7 +695,6 @@ view_logs() {
     echo -e "${CYAN}${BOLD}📜 NODE LOGS & STATUS${NC}"
     echo -e "${YELLOW}===============================================================================${NC}"
 
-    NODE_LOG="$SWARM_DIR/node.log"
     if [ -f "$NODE_LOG" ]; then
         echo -e "\n${BOLD}Last 50 lines of node.log:${NC}"
         tail -n 50 "$NODE_LOG"
@@ -696,7 +722,7 @@ main_menu() {
         echo "1. 🛠  Install/Reinstall Node"
         echo "2. 🚀  Run Node"
         echo "3. ⚙️  Update Node"
-        echo '4. 🔥  Change Configuration'
+        echo "4. 🔥  Change Configuration"
         echo "5. ♻️  Reset Peer ID"
         echo "6. 🗑️  Delete Everything & Start New"
         echo "7. 📉  Downgrade Version"

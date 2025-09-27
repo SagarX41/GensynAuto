@@ -1,5 +1,5 @@
 #!/bin/bash
-# Color setup AAAAAAAAAA
+# Color setup 
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -399,6 +399,7 @@ run_node() {
         rm -rf .venv
         python3 -m venv .venv
         source .venv/bin/activate
+        pip install --upgrade pip setuptools wheel --no-cache-dir
         install_python_packages
         # ----------------------------------
 

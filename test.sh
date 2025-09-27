@@ -1,6 +1,6 @@
 #!/bin/bash
 # set -e
-
+#AAAAAAAAAAAAAA 
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -31,7 +31,7 @@ NODE_LOG="$SWARM_DIR/node.log"
 
 # Global Variables
 KEEP_TEMP_DATA=true
-NODE_INIT_WAIT=1200  # Wait time for node initialization (in seconds, default 10 minutes)
+NODE_INIT_WAIT=300  # Reduced wait time for node initialization (5 minutes)
 
 # Logging
 log() {
@@ -504,11 +504,14 @@ has_error_recent() {
 install_python_packages() {
     TRANSFORMERS_VERSION=$(pip show transformers 2>/dev/null | grep ^Version: | awk '{print $2}')
     TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
+    TQDM_VERSION=$(pip show tqdm 2>/dev/null | grep ^Version: | awk '{print $2}')
 
-    if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ]; then
-        pip install --force-reinstall transformers==4.51.3 trl==0.19.1
+    if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ] || [ "$TQDM_VERSION" != "4.66.5" ]; then
+        pip install --force-reinstall transformers==4.51.3 trl==0.19.1 tqdm==4.66.5
     fi
-    pip freeze | grep -E '^(transformers|trl)=='
+    # Set COLUMNS to match official log width
+    export COLUMNS=180
+    pip freeze | grep -E '^(transformers|trl|tqdm)=='
 }
 
 # Kill old node processes
@@ -629,6 +632,7 @@ run_node() {
                 install_python_packages
 
                 # Run in background with unbuffered output
+                export COLUMNS=180
                 stdbuf -oL KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF &
 $PUSH
 $MODEL_NAME
@@ -638,62 +642,65 @@ EOF
                 log "INFO" "Started node process (PID: $NODE_PID)"
                 echo -e "${CYAN}Started node process (PID: $NODE_PID)${NC}"
 
-                # Tail logs in background for real-time display
+                # Start tailing logs immediately in background
                 tail -f "$NODE_LOG" &
                 TAIL_PID=$!
                 log "INFO" "Started tailing node.log (PID: $TAIL_PID)"
 
-                sleep "$NODE_INIT_WAIT"
+                # Wait for a shorter initialization period
+                sleep 300
 
-                # Stop tailing after initialization
-                kill -TERM "$TAIL_PID" 2>/dev/null
-                wait "$TAIL_PID" 2>/dev/null || true
-
-                if ! kill -0 "$NODE_PID" 2>/dev/null; then
-                    log "WARN" "⚠️ Node exited during initialization, restarting in 5 seconds..."
-                    echo -e "${YELLOW}⚠️ Node exited during initialization. Restarting in 5 seconds...${NC}"
-                    sleep 5
-                    continue
-                fi
-
+                # Check node status early
                 check_gensyn_node_status
                 if [ $? -eq 0 ]; then
-                    log "INFO" "✅ Node initialized successfully, entering monitoring loop..."
-                    while kill -0 "$NODE_PID" 2>/dev/null; do
-                        if has_error_recent; then
-                            log "ERROR" "❌ Critical error detected in recent log, killing and restarting..."
-                            echo -e "${RED}❌ Critical error detected. Killing and restarting in 5 seconds...${NC}"
-                            kill -TERM "$NODE_PID" 2>/dev/null
-                            wait "$NODE_PID" 2>/dev/null
-                            sleep 5
-                            break
-                        fi
-                        check_gensyn_node_status
-                        if [ $? -ne 0 ]; then
-                            log "ERROR" "❌ Node went OFFLINE, killing and restarting..."
-                            echo -e "${RED}❌ Node went OFFLINE. Killing and restarting in 5 seconds...${NC}"
-                            kill -TERM "$NODE_PID" 2>/dev/null
-                            wait "$NODE_PID" 2>/dev/null
-                            sleep 5
-                            break
-                        fi
-                        sleep 10
-                    done
-                    if ! kill -0 "$NODE_PID" 2>/dev/null; then
-                        if has_error; then
-                            log "ERROR" "❌ Node exited with critical error, restarting..."
-                            echo -e "${RED}❌ Node exited (critical error). Restarting in 5 seconds...${NC}"
-                        else
-                            log "WARN" "⚠️ Node exited without critical error, restarting..."
-                            echo -e "${YELLOW}⚠️ Node exited (non-critical). Restarting in 5 seconds...${NC}"
-                        fi
-                        sleep 5
-                    fi
+                    log "INFO" "✅ Node initialized successfully, continuing to monitor..."
+                    echo -e "${GREEN}✅ Node initialized successfully!${NC}"
                 else
                     log "ERROR" "❌ Node failed to initialize properly, killing and restarting..."
                     echo -e "${RED}❌ Node failed to initialize. Killing and restarting in 5 seconds...${NC}"
                     kill -TERM "$NODE_PID" 2>/dev/null
                     wait "$NODE_PID" 2>/dev/null
+                    kill -TERM "$TAIL_PID" 2>/dev/null
+                    wait "$TAIL_PID" 2>/dev/null || true
+                    sleep 5
+                    continue
+                fi
+
+                # Enter monitoring loop
+                while kill -0 "$NODE_PID" 2>/dev/null; do
+                    if has_error_recent; then
+                        log "ERROR" "❌ Critical error detected in recent log, killing and restarting..."
+                        echo -e "${RED}❌ Critical error detected. Killing and restarting in 5 seconds...${NC}"
+                        kill -TERM "$NODE_PID" 2>/dev/null
+                        wait "$NODE_PID" 2>/dev/null
+                        kill -TERM "$TAIL_PID" 2>/dev/null
+                        wait "$TAIL_PID" 2>/dev/null || true
+                        sleep 5
+                        break
+                    fi
+                    check_gensyn_node_status
+                    if [ $? -ne 0 ]; then
+                        log "ERROR" "❌ Node went OFFLINE, killing and restarting..."
+                        echo -e "${RED}❌ Node went OFFLINE. Killing and restarting in 5 seconds...${NC}"
+                        kill -TERM "$NODE_PID" 2>/dev/null
+                        wait "$NODE_PID" 2>/dev/null
+                        kill -TERM "$TAIL_PID" 2>/dev/null
+                        wait "$TAIL_PID" 2>/dev/null || true
+                        sleep 5
+                        break
+                    fi
+                    sleep 10
+                done
+                if ! kill -0 "$NODE_PID" 2>/dev/null; then
+                    if has_error; then
+                        log "ERROR" "❌ Node exited with critical error, restarting..."
+                        echo -e "${RED}❌ Node exited (critical error). Restarting in 5 seconds...${NC}"
+                    else
+                        log "WARN" "⚠️ Node exited without critical error, restarting..."
+                        echo -e "${YELLOW}⚠️ Node exited (non-critical). Restarting in 5 seconds...${NC}"
+                    fi
+                    kill -TERM "$TAIL_PID" 2>/dev/null
+                    wait "$TAIL_PID" 2>/dev/null || true
                     sleep 5
                 fi
             done
@@ -708,6 +715,7 @@ EOF
             install_python_packages
             : "${PARTICIPATE_AI_MARKET:=Y}"
             : > "$NODE_LOG"
+            export COLUMNS=180
             stdbuf -oL KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF
 $PUSH
 $MODEL_NAME

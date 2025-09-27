@@ -1,6 +1,6 @@
 #!/bin/bash
 # set -e
-
+#AAAAAAAAAAAAAAAAAAAAAAAAAA
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -493,8 +493,39 @@ check_gensyn_node_status() {
     return 1
 }
 
+has_error() {
+    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)' "$NODE_LOG"
+}
+
 has_error_recent() {
     tail -n 50 "$NODE_LOG" | grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)'
+}
+
+install_python_packages() {
+    TRANSFORMERS_VERSION=$(pip show transformers 2>/dev/null | grep ^Version: | awk '{print $2}')
+    TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
+
+    if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ]; then
+        pip install --force-reinstall transformers==4.51.3 trl==0.19.1
+    fi
+    pip freeze | grep -E '^(transformers|trl)=='
+}
+
+# Kill old node processes
+kill_old_node_processes() {
+    log "INFO" "🔪 Checking for and killing old run_rl_swarm.sh processes..."
+    pids=$(pgrep -f "run_rl_swarm.sh" | grep -v "$$")
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            kill -TERM "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null || true
+            log "INFO" "✅ Killed old node process (PID: $pid)"
+            echo -e "${CYAN}✅ Killed old node process (PID: $pid)${NC}"
+        done
+    else
+        log "INFO" "ℹ️ No old node processes found"
+        echo -e "${CYAN}ℹ️ No old node processes found${NC}"
+    fi
 }
 
 # Run Node
@@ -538,7 +569,7 @@ run_node() {
     printf "${BOLD}%-3s %-40s${NC}\n" "2." "Qwen/Qwen3-0.6B"
     printf "${BOLD}%-3s %-40s${NC}\n" "3." "nvidia/AceInstruct-1.5B"
     printf "${BOLD}%-3s %-40s${NC}\n" "4." "dnotitia/Smoothie-Qwen3-1.7B"
-    printf "${BOLD}%-3s %-40s${NC}\n" "5." "Gensyn/Qwen2.5-1.5B-Instruct"
+    printf "${BOLD}%-3s %-40s${NC}\n" "5." "Gensyn/Qwen2.5-1.5B-Instruct" 
     printf "${BOLD}%-3s %-40s${NC}\n" "6." "Custom model"
     echo -e "${YELLOW}-------------------------------------------------${NC}"
     read -p "$(echo -e "${BOLD}Choose model [0-6] (Enter = keep current: ${MODEL_NAME:-None}): ${NC}")" model_choice
@@ -586,6 +617,9 @@ run_node() {
                 : > "$NODE_LOG"
                 echo "=== Node Restart: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$NODE_LOG"
 
+                # Kill any existing node processes
+                kill_old_node_processes
+
                 # Reset venv on every restart
                 log "INFO" "🔄 Resetting Python virtual environment..."
                 rm -rf .venv
@@ -594,8 +628,8 @@ run_node() {
                 pip install --upgrade pip setuptools wheel --no-cache-dir
                 install_python_packages
 
-                # Run in background with input
-                KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh > "$NODE_LOG" 2>&1 <<EOF &
+                # Run in background with input, showing output in terminal and logging
+                KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF &
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
@@ -664,7 +698,7 @@ EOF
             install_python_packages
             : "${PARTICIPATE_AI_MARKET:=Y}"
             : > "$NODE_LOG"
-            KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh <<EOF | tee "$NODE_LOG"
+            KEEP_TEMP_DATA="$KEEP_TEMP_DATA" ./run_rl_swarm.sh 2>&1 | tee -a "$NODE_LOG" <<EOF
 $PUSH
 $MODEL_NAME
 $PARTICIPATE_AI_MARKET
@@ -747,20 +781,6 @@ reset_peer() {
     sleep 5
 }
 
-install_python_packages() {
-    TRANSFORMERS_VERSION=$(pip show transformers 2>/dev/null | grep ^Version: | awk '{print $2}')
-    TRL_VERSION=$(pip show trl 2>/dev/null | grep ^Version: | awk '{print $2}')
-
-    if [ "$TRANSFORMERS_VERSION" != "4.51.3" ] || [ "$TRL_VERSION" != "0.19.1" ]; then
-        pip install --force-reinstall transformers==4.51.3 trl==0.19.1
-    fi
-    pip freeze | grep -E '^(transformers|trl)=='
-}
-
-has_error() {
-    grep -qP '(current.?batch|UnboundLocalError|Daemon failed to start|FileNotFoundError|DHTNode bootstrap failed|Failed to connect to Gensyn Testnet|Killed|argument of type '\''NoneType'\'' is not iterable|Encountered error during training|cannot unpack non-iterable NoneType object|ConnectionRefusedError|Exception occurred during game run|get_logger\(\)\.exception)' "$NODE_LOG"
-}
-
 # Main Menu
 main_menu() {
     while true; do
@@ -776,7 +796,7 @@ main_menu() {
         echo "8. ❌ Exit"
         echo -e "${GREEN}===============================================================================${NC}"
         
-        read -p "${BOLD}${YELLOW}➡️ Select option [1-7]: ${NC}" choice
+        read -p "${BOLD}${YELLOW}➡️ Select option [1-8]: ${NC}" choice
         
         case $choice in
             1) install_node ;;
@@ -819,4 +839,4 @@ main_menu() {
 # Initialize and start
 init
 trap "echo -e '\n${GREEN}✅ Stopped gracefully${NC}'; disable_swap; exit 0" SIGINT
-main_menu 
+main_menu

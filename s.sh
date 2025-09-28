@@ -128,8 +128,8 @@ install_deps() {
 # Swap Management
 manage_swap() {
     if [ ! -f "$SWAP_FILE" ]; then
-        log "INFO" "Creating 1G swap file..."
-        sudo fallocate -l 1G "$SWAP_FILE" >/dev/null 2>&1
+        log "INFO" "Creating 20G swap file..."
+        sudo fallocate -l 20G "$SWAP_FILE" >/dev/null 2>&1
         sudo chmod 600 "$SWAP_FILE" >/dev/null 2>&1
         sudo mkswap "$SWAP_FILE" >/dev/null 2>&1
         sudo swapon "$SWAP_FILE" >/dev/null 2>&1
@@ -383,7 +383,7 @@ run_node() {
     log "INFO" "Starting node in auto-restart mode"
     cd "$SWARM_DIR"
     fix_swarm_pem_permissions
-    manage_swap
+    
 
     : "${PARTICIPATE_AI_MARKET:=Y}"
 

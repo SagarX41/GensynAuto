@@ -1,5 +1,5 @@
 #!/bin/bash
-# Color setup
+# Color setup AAAAAAAAA
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -304,30 +304,37 @@ check_gensyn_node_status() {
     # Define error and status indicators
     local error_indicators=("Error" "Exception" "RuntimeError" "Traceback" "Failed")
     local status_indicators=("Map: 100%" "Node running successfully" "Connected to network")
+    local ignorable_error=">> Failed to open http://localhost:3000. Please open it manually"
 
     # Check for errors first and extract details
     local error_detected=false
     local error_message=""
     for error in "${error_indicators[@]}"; do
         if echo "$TMUX_OUTPUT" | grep -q "$error"; then
-            error_detected=true
-            # Extract the full error message (e.g., line containing the error)
             error_message=$(echo "$TMUX_OUTPUT" | grep -A 5 "$error" | head -n 1)
             # Look for file and line number in the stack trace
             local error_location=$(echo "$TMUX_OUTPUT" | grep -B 1 "$error" | grep -o "File \"[^\"]*\", line [0-9]*" | tail -n 1)
-            if [ -n "$error_location" ]; then
-                log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message (Location: $error_location)"
-                echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
-                echo -e "${YELLOW}   Location: $error_location${NC}"
+
+            # Check if the error is ignorable
+            if [[ "$error_message" == *"$ignorable_error"* ]]; then
+                log "WARN" "⚠️ Ignored non-critical error: $error_message"
+                echo -e "${YELLOW}⚠️ Ignored non-critical error: $error_message${NC}"
             else
-                log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message"
-                echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
+                error_detected=true
+                if [ -n "$error_location" ]; then
+                    log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message (Location: $error_location)"
+                    echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
+                    echo -e "${YELLOW}   Location: $error_location${NC}"
+                else
+                    log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message"
+                    echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
+                fi
+                return 1
             fi
-            return 1
         fi
     done
 
-    # Check for status indicators only if no errors are found
+    # Check for status indicators only if no critical errors are found
     local indicator_found=false
     for indicator in "${status_indicators[@]}"; do
         if echo "$TMUX_OUTPUT" | grep -q "$indicator" >/dev/null 2>&1; then
@@ -347,18 +354,24 @@ check_gensyn_node_status() {
         echo "$TMUX_OUTPUT" >> "$NODE_LOG"
         for error in "${error_indicators[@]}"; do
             if echo "$TMUX_OUTPUT" | grep -q "$error"; then
-                error_detected=true
                 error_message=$(echo "$TMUX_OUTPUT" | grep -A 5 "$error" | head -n 1)
                 error_location=$(echo "$TMUX_OUTPUT" | grep -B 1 "$error" | grep -o "File \"[^\"]*\", line [0-9]*" | tail -n 1)
-                if [ -n "$error_location" ]; then
-                    log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message (Location: $error_location)"
-                    echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
-                    echo -e "${YELLOW}   Location: $error_location${NC}"
+
+                if [[ "$error_message" == *"$ignorable_error"* ]]; then
+                    log "WARN" "⚠️ Ignored non-critical error: $error_message"
+                    echo -e "${YELLOW}⚠️ Ignored non-critical error: $error_message${NC}"
                 else
-                    log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message"
-                    echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
+                    error_detected=true
+                    if [ -n "$error_location" ]; then
+                        log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message (Location: $error_location)"
+                        echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
+                        echo -e "${YELLOW}   Location: $error_location${NC}"
+                    else
+                        log "ERROR" "❌ Node Status: ERROR - Error detected: $error_message"
+                        echo -e "${RED}❌ Node Status: ERROR - Error detected: $error_message${NC}"
+                    fi
+                    return 1
                 fi
-                return 1
             fi
         done
         for indicator in "${status_indicators[@]}"; do

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Color setup 
+# Color setup  AAAAAAAAAAAAAAAA
 if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then
     BOLD=$(tput bold)
     RED=$(tput setaf 1)
@@ -127,31 +127,29 @@ install_deps() {
 
 # Swap Management
 manage_swap() {
-    local desired_size=$((20 * 1024 * 1024)) # 20GB in KB
-    log "INFO" "Checking swap file at $SWAP_FILE..."
+    log "INFO" "Starting swap file management for $SWAP_FILE..."
 
-    # Check if swap file exists and remove it
+    # Remove existing swap file if it exists
     if [ -f "$SWAP_FILE" ]; then
-        log "INFO" "Existing swap file found at $SWAP_FILE, removing it..."
-        # Disable swap if active
+        log "INFO" "Found existing swap file at $SWAP_FILE, disabling and removing..."
         if swapon --show | grep -q "$SWAP_FILE"; then
-            log "INFO" "Disabling existing swap file..."
+            log "INFO" "Disabling swap file..."
             sudo swapoff "$SWAP_FILE"
             if [ $? -ne 0 ]; then
                 log "ERROR" "Failed to disable swap file"
                 exit 1
             fi
         fi
-        # Remove existing swap file
         sudo rm -f "$SWAP_FILE"
         if [ $? -ne 0 ]; then
             log "ERROR" "Failed to remove existing swap file"
             exit 1
         fi
-        log "INFO" "Removed existing swap file"
+        log "INFO" "Existing swap file removed"
     fi
 
-    # Check available disk space
+    # Check available disk space (20GB = 20 * 1024 * 1024 KB)
+    local desired_size=$((20 * 1024 * 1024))
     local disk_free=$(df -k --output=avail / | tail -n 1)
     if [ "$disk_free" -lt "$desired_size" ]; then
         log "ERROR" "Insufficient disk space: ${disk_free}KB available, ${desired_size}KB required"
@@ -159,10 +157,10 @@ manage_swap() {
     fi
 
     # Create new 20GB swap file
-    log "INFO" "Creating 20G swap file..."
+    log "INFO" "Creating new 20GB swap file..."
     sudo fallocate -l 20G "$SWAP_FILE"
     if [ $? -ne 0 ]; then
-        log "ERROR" "Failed to create swap file"
+        log "ERROR" "Failed to create 20GB swap file"
         exit 1
     fi
     sudo chmod 600 "$SWAP_FILE"
@@ -181,16 +179,16 @@ manage_swap() {
         exit 1
     fi
 
-    # Ensure swap file is in /etc/fstab
+    # Update /etc/fstab
     if ! grep -q "$SWAP_FILE" /etc/fstab; then
         echo "$SWAP_FILE none swap sw 0 0" | sudo tee -a /etc/fstab
         if [ $? -ne 0 ]; then
-            log "ERROR" "Failed to add swap file to /etc/fstab"
+            log "ERROR" "Failed to update /etc/fstab"
             exit 1
         fi
         log "INFO" "Added swap file to /etc/fstab"
     fi
-    log "INFO" "✅ Swap file created and enabled"
+    log "INFO" "✅ 20GB swap file created and enabled"
 }
 
 # Modify run script

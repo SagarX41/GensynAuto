@@ -528,6 +528,7 @@ check_resources() {
 
 init
 check_resources
+manage_swap
 trap 'log "INFO" "Received SIGINT, shutting down gracefully..."; echo -e "\n${GREEN}✅ Stopped gracefully${NC}"; tmux kill-session -t "GEN" 2>/dev/null; kill $RESOURCE_MONITOR_PID 2>/dev/null; exit 0' SIGINT
 if [ -d "$SWARM_DIR" ] && [ -f "$SWARM_DIR/run_rl_swarm.sh" ]; then
     echo -e "${GREEN}✅ Node already installed, proceeding to unzip files and run...${NC}"

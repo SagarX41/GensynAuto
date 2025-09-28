@@ -127,15 +127,63 @@ install_deps() {
 
 # Swap Management
 manage_swap() {
-    if [ ! -f "$SWAP_FILE" ]; then
-        log "INFO" "Creating 20G swap file..."
-        sudo fallocate -l 20G "$SWAP_FILE" >/dev/null 2>&1
-        sudo chmod 600 "$SWAP_FILE" >/dev/null 2>&1
-        sudo mkswap "$SWAP_FILE" >/dev/null 2>&1
-        sudo swapon "$SWAP_FILE" >/dev/null 2>&1
-        echo "$SWAP_FILE none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null 2>&1
-        log "INFO" "✅ Swap file created and enabled"
+    local desired_size=$((20 * 1024 * 1024)) # 20GB in KB
+    log "INFO" "Checking swap file at $SWAP_FILE..."
+
+    # Check if swap file exists
+    if [ -f "$SWAP_FILE" ]; then
+        # Get current swap file size in KB
+        current_size=$(du -k "$SWAP_FILE" | cut -f1)
+        log "INFO" "Existing swap file size: ${current_size}KB"
+
+        # If size is not 20GB, remove and recreate
+        if [ "$current_size" -ne "$desired_size" ]; then
+            log "INFO" "Swap file size is not 20GB, recreating..."
+            # Disable swap if active
+            if swapon --show | grep -q "$SWAP_FILE"; then
+                log "INFO" "Disabling existing swap file..."
+                sudo swapoff "$SWAP_FILE" >/dev/null 2>&1
+                if [ $? -ne 0 ]; then
+                    log "ERROR" "Failed to disable swap file"
+                    exit 1
+                fi
+            fi
+            # Remove existing swap file
+            sudo rm -f "$SWAP_FILE" >/dev/null 2>&1
+            log "INFO" "Removed existing swap file"
+        else
+            log "INFO" "Swap file is already 20GB, no changes needed"
+            # Ensure it's enabled
+            if ! swapon --show | grep -q "$SWAP_FILE"; then
+                sudo swapon "$SWAP_FILE" >/dev/null 2>&1
+                log "INFO" "Enabled existing swap file"
+            fi
+            return 0
+        fi
     fi
+    log "INFO" "Creating 20G swap file..."
+    sudo fallocate -l 20G "$SWAP_FILE" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log "ERROR" "Failed to create swap file"
+        exit 1
+    fi
+    sudo chmod 600 "$SWAP_FILE" >/dev/null 2>&1
+    sudo mkswap "$SWAP_FILE" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log "ERROR" "Failed to format swap file"
+        exit 1
+    fi
+    sudo swapon "$SWAP_FILE" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        log "ERROR" "Failed to enable swap file"
+        exit 1
+    fi
+
+    if ! grep -q "$SWAP_FILE" /etc/fstab; then
+        echo "$SWAP_FILE none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null 2>&1
+        log "INFO" "Added swap file to /etc/fstab"
+    fi
+    log "INFO" "✅ Swap file created and enabled"
 }
 
 # Modify run script

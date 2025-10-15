@@ -30,19 +30,17 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SagarX41/GensynAuto/main/men
 
 ## 🧠 MAIN MENU OPTIONS
 
-Below are the key features and capabilities our menu provides:
-
-### **Menu Options & What They Do**
-
-| # | Icon | Feature | Description |
-|---|------|---------|-------------|
-| **1** | 🛠️ | **Install/Reinstall Node** | Complete installation with all dependencies |
-| **2** | 🚀 | **Start Node** | Launch with auto-restart or single run modes |
-| **3** | ⚙️ | **Change Settings** | Customize models, HF integration, AI market |
-| **4** | ♻️ | **Reset Peer ID** | Generate new peer identity and fresh start |
-| **5** | 🗑️ | **Complete Reset** | System wipe with optional fresh reinstall |
-| **6** | 📉 | **Version Control** | Switch between different versions |
-| **7** | ❌ | **Exit** | Safely close the interface |
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🟢 Option 1 🛠️ - Install/Reinstall Node - Fresh setup with dependencies │
+│ 🟢 Option 2 🚀 - Start Node - Launch with auto-restart or single run      │
+│ 🟢 Option 3 ⚙️ - Change Settings - Customize models & integrations       │
+│ 🟢 Option 4 ♻️ - Reset Peer ID - Generate fresh peer identity            │
+│ 🟢 Option 5 🗑️ - Complete Reset - Full system wipe & reinstall          │
+│ 🟢 Option 6 📉 - Version Control - Switch between version releases      │
+│ 🔴 Option 7 ❌ - Exit - Safely close management interface               │
+└─────────────────────────────────────────────────────────────┘
+```
 =============================================================
 
 ---

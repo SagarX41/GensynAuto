@@ -34,15 +34,15 @@ Below are the key features and capabilities our menu provides:
 
 ### **Menu Options & What They Do**
 
-| Option Number | Icon | Feature | Description |
-|---------------|--------|---------|-------------|
-| **1** | 🛠️ | **Install/Reinstall Node** | Complete node installation with all dependencies, auto-configurations, and troubleshooting tools |
-| **2** | 🚀 | **Start Node** | Launches your node with multiple run modes (auto-restart, single run, or fresh install) |
-| **3** | ⚙️ | **Change Settings** | Customize model selection, Hugging Face integration, and AI market participation |
-| **4** | ♻️ | **Reset Peer ID** | Generate new peer identity and clear all node data for fresh start |
-| **5** | 🗑️ | **Complete Clean Reset** | Full system wipe and optional fresh reinstallation |
-| **6** | 📉 | **Version Control** | Switch between different versions for compatibility |
-| **7** | ❌ | **Exit** | Safely close the management interface |
+| # | Icon | Feature | Description |
+|---|------|---------|-------------|
+| **1** | 🛠️ | **Install/Reinstall Node** | Complete installation with all dependencies |
+| **2** | 🚀 | **Start Node** | Launch with auto-restart or single run modes |
+| **3** | ⚙️ | **Change Settings** | Customize models, HF integration, AI market |
+| **4** | ♻️ | **Reset Peer ID** | Generate new peer identity and fresh start |
+| **5** | 🗑️ | **Complete Reset** | System wipe with optional fresh reinstall |
+| **6** | 📉 | **Version Control** | Switch between different versions |
+| **7** | ❌ | **Exit** | Safely close the interface |
 =============================================================
 
 ---

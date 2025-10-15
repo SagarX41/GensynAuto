@@ -10,11 +10,13 @@ Welcome! This guide empowers you to install, manage, and troubleshoot your Gensy
 
 ---
 
-## 📦 Why Use This Menu?
+## 📦 Why Choose Our Node Manager?
 
-- **All-in-One Control:** Install, run, update, fix, or reset your node—no manual steps.
-- **Zero Hassle:** No downloads, no guesswork, no confusion.
-- **Advanced Features:** Power tools for pros, simplicity for beginners.
+🚀 **All-in-One Control** - Complete node lifecycle management in one place  
+⚡ **Lightning Fast Setup** - Get running in under 5 minutes with zero configuration  
+🔧 **Advanced Automation** - Automated troubleshooting and system optimization  
+🛡️ **Beginner Friendly** - Simple interface with guided workflows  
+📊 **Pro Tools Included** - Advanced monitoring and customization options
 
 ---
 
@@ -31,16 +33,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SagarX41/GensynAuto/main/men
 ## 🧠 MAIN MENU OPTIONS
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ 🟢 Option 1 🛠️ - Install/Reinstall Node - Fresh setup with dependencies │
-│ 🟢 Option 2 🚀 - Start Node - Launch with auto-restart or single run      │
-│ 🟢 Option 3 ⚙️ - Change Settings - Customize models & integrations       │
-│ 🟢 Option 4 ♻️ - Reset Peer ID - Generate fresh peer identity            │
-│ 🟢 Option 5 🗑️ - Complete Reset - Full system wipe & reinstall          │
-│ 🟢 Option 6 📉 - Version Control - Switch between version releases      │
-│ 🔴 Option 7 ❌ - Exit - Safely close management interface               │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│ 🟢 Option 1 🛠️ - Install/Reinstall Node - Fresh setup          │
+│ 🟢 Option 2 🚀 - Start Node - Launch with auto-restart mode    │
+│ 🟢 Option 3 ⚙️ - Change Settings - Customize models            │
+│ 🟢 Option 4 ♻️ - Reset Peer ID - Generate fresh peer identity  │
+│ 🟢 Option 5 🗑️ - Complete Reset - Full system wipe & reinstall │
+│ 🟢 Option 6 📉 - Version Control - Switch between versions     │
+│ 🔴 Option 7 ❌ - Exit - Safely close management interface      │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+🔔 **Need Help?** Check our [FAQ Section](#-faq--troubleshooting) below
 =============================================================
 
 ---

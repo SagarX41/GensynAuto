@@ -8,7 +8,7 @@
 <img src="problems/problem1.jpg" width="500px" alt="Node Start/Stop Problem" />
 
 > **⚠️ Must save your `swarm.pem` file before deleting the node.**  
-> [📦 How to back it up? Click here.](https://github.com/HustleAirdrops/Gensyn-Advanced-Solutions/tree/main#-backup-credentials)
+> [📦 How to back it up? Create a backup script as needed.]
 
 **Delete Old Gensyn:**
 ```bash

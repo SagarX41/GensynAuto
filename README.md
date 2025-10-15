@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌀 Gensyn Node Unified Setup Guide
+# 🌀 My Gensyn Node Setup Guide
 
 **The Ultimate One-Command Solution for Gensyn Node Management**
 
@@ -27,7 +27,7 @@ screen -S gensyn
 Open your terminal and run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/HustleAirdrops/Gensyn-Advanced-Solutions/main/menu.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/SagarX41/GensynAuto/main/menu.sh)
 ```
 
 ---
@@ -77,35 +77,6 @@ You'll see a menu like this:
     cloudflared tunnel --url http://localhost:3000
     ```
 - Open the provided link in your browser, login, and return to the node terminal.
-
----
-
-## 🔐 Backup Your Credentials
-
-To safely backup your credentials, run:
-
-```bash
-[ -f backup.sh ] && rm backup.sh; curl -sSL -O https://raw.githubusercontent.com/zunxbt/gensyn-testnet/main/backup.sh && chmod +x backup.sh && ./backup.sh
-```
-
----
-
-## 🏆 Check Your Rewards
-
-- Go to [@GensynReward_bot](https://t.me/GensynReward_bot) on Telegram.
-- Send `/add` and your Peer ID to track rewards.
-
-**Important:**  
-If you see `0x0000000000000000000000000000000000000000` as your EOA address, your work is **not** being recorded.
-- Delete the `swarm.pem` file.
-- Restart setup with a new email.
-
----
-
-## 💬 Need Help?
-
-- **Direct Support:** [@Legend_Aashish](https://t.me/Legend_Aashish)
-- **Guides & Updates:** [@Hustle_Airdrops](https://t.me/Hustle_Airdrops)
 
 ---
 

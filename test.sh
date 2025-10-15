@@ -42,7 +42,7 @@ log() {
 # Initialize
 init() {
     touch "$LOG_FILE"
-    log "INFO" "=== HUSTLE AIRDROPS RL-SWARM MANAGER STARTED ==="
+    log "INFO" "=== MY GENSYN NODE SETUP LAUNCHER STARTED ==="
 }
 # Install unzip if not present
 install_unzip() {

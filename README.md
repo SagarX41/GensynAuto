@@ -19,10 +19,6 @@ Welcome! This guide empowers you to install, manage, and troubleshoot your Gensy
 ---
 
 ## 🚀 Quick Start (One Command!)
-First Create Screen ( for vps users only )
-```bash
-screen -S gensyn
-```
 
 Open your terminal and run:
 
@@ -32,33 +28,22 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SagarX41/GensynAuto/main/men
 
 ---
 
-## 🧠 GENSYN MAIN MENU PREVIEW
+## 🧠 MAIN MENU OPTIONS
 
-You'll see a menu like this:
+Below are the key features and capabilities our menu provides:
 
-```text
-==================== 🧠 GENSYN MAIN MENU ====================
-1. 🛠  Install/Reinstall Node
-2. 🚀  Run Node
-3. ⚙️  Update Node
-4. ♻️  Reset Peer ID
-5. 🗑️  Delete Everything & Start New
-6. 📉  Downgrade Version
-7. ❌ Exit
+### **Menu Options & What They Do**
+
+| Option Number | Icon | Feature | Description |
+|---------------|--------|---------|-------------|
+| **1** | 🛠️ | **Install/Reinstall Node** | Complete node installation with all dependencies, auto-configurations, and troubleshooting tools |
+| **2** | 🚀 | **Start Node** | Launches your node with multiple run modes (auto-restart, single run, or fresh install) |
+| **3** | ⚙️ | **Change Settings** | Customize model selection, Hugging Face integration, and AI market participation |
+| **4** | ♻️ | **Reset Peer ID** | Generate new peer identity and clear all node data for fresh start |
+| **5** | 🗑️ | **Complete Clean Reset** | Full system wipe and optional fresh reinstallation |
+| **6** | 📉 | **Version Control** | Switch between different versions for compatibility |
+| **7** | ❌ | **Exit** | Safely close the management interface |
 =============================================================
-```
-
-### **What Each Option Does**
-
-| Option | Action |
-|--------|--------|
-| 🛠 **Install/Reinstall Node** | Installs or updates your node to the latest version. |
-| 🚀 **Run Node** | Starts your node (after setup/config). |
-| ⚙️ **Update Node** | Update Node |
-| ♻️ **Reset Peer ID** | Generates a new Peer ID for your node. |
-| 🗑️ **Delete Everything & Start New** | Wipes all data for a fresh start. |
-| 📉 **Downgrade Version** | Downgrade Node Version. |
-| ❌ **Exit** | Closes the menu. |
 
 ---
 
